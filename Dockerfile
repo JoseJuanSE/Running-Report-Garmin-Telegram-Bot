@@ -29,7 +29,7 @@ WORKDIR /app
 
 # Copiamos las dependencias e instalamos
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt && echo "Cache roto"
 
 # Copiamos el resto del código (main.py)
 COPY . .
