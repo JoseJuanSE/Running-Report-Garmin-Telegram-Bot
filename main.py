@@ -255,14 +255,12 @@ def process_report(data, zones_raw, splits_raw):
     return metrics
 
 def generate_markdown(m):
-    # TABLA COMPLETA CON TODAS LAS MÉTRICAS
-    # Usamos ``` para que Telegram respete los espacios
+    # TABLA COMPLETA CON CABECERAS UTF-8
     laps_table = "```\n"
     laps_table += "| #  | km   | Ritmo | GAP   | FC  | Cad | GCT | EF  |\n"
     laps_table += "|----|------|-------|-------|-----|-----|-----|-----|\n"
     
     for l in m['laps']:
-        # Formateo riguroso para alineación
         nr = str(l['nr']).rjust(2)
         dist = f"{(l['dist']/1000):.2f}".rjust(4)
         ritmo = str(l['ritmo']).center(5)
@@ -274,7 +272,7 @@ def generate_markdown(m):
         
         laps_table += f"| {nr} | {dist} | {ritmo} | {gap} | {fc} | {cad} | {gct} | {ef} |\n"
     
-    laps_table += "```" # Fin de la tabla monoespaciada
+    laps_table += "```"
     
     return f"""
 # 🏃 *{m['tipo'].upper()}*
@@ -309,20 +307,24 @@ def telegram_webhook(request):
     siri_mode = request.args.get('siri') or request.args.get('source') == 'siri'
     command_arg = request.args.get('command')
     
+    # --- ENCABEZADOS PARA SIRI/IPHONE ---
+    # Esto es lo que arregla los caracteres raros (Ã¡ -> á)
+    headers = {'Content-Type': 'text/plain; charset=utf-8'}
+
     if siri_mode and command_arg:
         text = command_arg.strip().lower()
         try:
             if text in ['mañana', 'morning', 'reporte', 'dia']:
-                return get_morning_report(), 200
+                return get_morning_report(), 200, headers
             elif text in ['menu', 'lista', 'historial']:
-                return get_activity_menu(), 200
+                return get_activity_menu(), 200, headers
             else:
                 try:
                     idx = int(text)
                     garmin = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
                     garmin.login()
                     activities = garmin.get_activities(idx, 1)
-                    if not activities: return "No encontré esa actividad.", 200
+                    if not activities: return "No encontré esa actividad.", 200, headers
                     act_id = activities[0]['activityId']
                     details = garmin.get_activity(act_id)
                     try: zones = garmin.connectapi(f"/activity-service/activity/{act_id}/hrTimeInZones")
@@ -331,10 +333,10 @@ def telegram_webhook(request):
                     except: splits = {}
                     if details:
                         metrics = process_report(details, zones, splits)
-                        return generate_markdown(metrics), 200
-                    return "Error: Actividad vacía.", 200
-                except: return "Comando Siri no reconocido.", 200
-        except Exception as e: return f"Error Siri: {str(e)}", 500
+                        return generate_markdown(metrics), 200, headers
+                    return "Error: Actividad vacía.", 200, headers
+                except: return "Comando Siri no reconocido.", 200, headers
+        except Exception as e: return f"Error Siri: {str(e)}", 500, headers
 
     req = request.get_json(silent=True)
     if not req or 'message' not in req: return 'OK', 200
