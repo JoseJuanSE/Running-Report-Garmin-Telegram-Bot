@@ -1,23 +1,24 @@
-# Usamos Python 3.10 que es súper estable
+# Usamos Python 3.10
 FROM python:3.10-slim
 
-# Variables para que Python no guarde basura y los logs salgan rápido
+# Evitar archivos basura
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-# Directorio de trabajo
 WORKDIR /app
 
-# Copiamos TODOS los archivos al contenedor
+# Copiamos todo
 COPY . .
 
-# --- MEDIDA DE SEGURIDAD EXTREMA ---
-# Instalamos las librerías manualmente aquí para evitar problemas con requirements.txt
-# Esto garantiza que functions-framework se instale
-RUN pip install --no-cache-dir functions-framework==3.5.0 garminconnect requests garth
+# --- INSTALACIÓN MANUAL BLINDADA ---
+# Instalamos TODO lo necesario aquí mismo para no depender de requirements.txt externos
+RUN pip install --no-cache-dir \
+    functions-framework==3.5.0 \
+    garminconnect \
+    requests \
+    garth
 
-# --- EL COMANDO MAESTRO ---
-# --source=main.py : Le dice explícitamente dónde buscar el código
-# --target=telegram_webhook : Le dice qué función ejecutar
-# --debug : Nos dará más detalles si falla
-CMD ["functions-framework", "--source=main.py", "--target=telegram_webhook", "--port=8080", "--debug"]
+# --- EL COMANDO DE ARRANQUE ---
+# --host=0.0.0.0 : CRÍTICO. Permite que Google Cloud se conecte al bot.
+# --port=8080 : El puerto estándar que espera Google.
+CMD ["functions-framework", "--source=main.py", "--target=telegram_webhook", "--host=0.0.0.0", "--port=8080", "--debug"]
