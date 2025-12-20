@@ -12,31 +12,26 @@ from garminconnect import Garmin
 
 # --- CLOUD RUN HACK ---
 # Force Garmin library to use /tmp for session tokens (Read-only filesystem fix)
-# Forzar a la librería Garmin a usar /tmp para tokens (Arreglo de sistema de archivos de solo lectura)
 os.environ['HOME'] = '/tmp'
 
-# --- ENVIRONMENT VARIABLES / VARIABLES DE ENTORNO ---
+# --- ENVIRONMENT VARIABLES ---
 GARMIN_EMAIL = os.environ.get('GARMIN_EMAIL')
 GARMIN_PASSWORD = os.environ.get('GARMIN_PASSWORD')
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
 
 # Language Selection: 'es' (Spanish) or 'en' (English). Default: 'es'
-# Selección de Idioma: 'es' (Español) o 'en' (Inglés). Por defecto: 'es'
 LANG_CODE = os.environ.get('BOT_LANGUAGE', 'es').lower()
 
-# --- CONSTANTS / CONSTANTES ---
-# Connect IQ ID for Efficiency Factor (Data Field)
-# ID de Connect IQ para el Factor de Eficiencia
+# --- CONSTANTS ---
 EF_APP_ID = "e9f83886-2e1d-448e-aa0a-0cdfb9160df9"
-EF_FIELD_NUM_GLOBAL = 2  # Field ID in Summary / ID en Resumen
-EF_FIELD_NUM_LAP = 1     # Field ID in Laps / ID en Vueltas
+EF_FIELD_NUM_GLOBAL = 2  
+EF_FIELD_NUM_LAP = 1     
 
 # ==============================================================================
 # TRANSLATION DICTIONARY / DICCIONARIO DE TRADUCCIÓN
 # ==============================================================================
 TRANS = {
     'es': {
-        # Status Messages
         'loading_1': "⏳ 1/3 Conectando...",
         'loading_2': "✅ 2/3 Descargando...",
         'loading_vital': "⏳ Obteniendo signos vitales...",
@@ -45,13 +40,9 @@ TRANS = {
         'err_empty': "❌ Error: Actividad vacía.",
         'err_menu': "❌ Error obteniendo menú",
         'err_morning': "❌ Error obteniendo reporte matutino",
-        
-        # Help & Menu
         'help_msg': "🤖 **Comandos:**\n☀️ `mañana` (Salud)\n📋 `lista` (Historial)\n🔢 `0` (Último entreno)",
         'menu_title': "📋 **Últimas Actividades:**",
         'menu_footer': "👉 *Envía el número (0, 1...) para ver detalles.*",
-        
-        # Morning Report
         'morning_title': "🌅 **Reporte Matutino**",
         'sleep': "💤 **Sueño**",
         'duration': "⏱️ Duración",
@@ -66,8 +57,6 @@ TRANS = {
         'advice_ok': "✅ Luz verde para entrenar.",
         'advice_warn': "⚠️ Baja la carga hoy.",
         'advice_stop': "🛑 Descansa, soldado.",
-        
-        # Activity Report
         'rep_title': "🏃 **REPORTE**",
         'sec_main': "⏱️ **PRINCIPALES**",
         'sec_cardio': "❤️ **CARDIO & CARGA**",
@@ -91,7 +80,6 @@ TRANS = {
         'feel_map': {0: "Muy Débil", 25: "Débil", 50: "Normal", 75: "Fuerte", 100: "Muy Fuerte"}
     },
     'en': {
-        # Status Messages
         'loading_1': "⏳ 1/3 Connecting...",
         'loading_2': "✅ 2/3 Downloading...",
         'loading_vital': "⏳ Fetching vital signs...",
@@ -100,13 +88,9 @@ TRANS = {
         'err_empty': "❌ Error: Empty activity.",
         'err_menu': "❌ Error fetching menu",
         'err_morning': "❌ Error fetching morning report",
-        
-        # Help & Menu
         'help_msg': "🤖 **Bot Commands:**\n☀️ `morning` (Health)\n📋 `list` (History)\n🔢 `0` (Latest activity)",
         'menu_title': "📋 **Recent Activities:**",
         'menu_footer': "👉 *Send the number (0, 1...) for details.*",
-        
-        # Morning Report
         'morning_title': "🌅 **Morning Report**",
         'sleep': "💤 **Sleep**",
         'duration': "⏱️ Duration",
@@ -121,8 +105,6 @@ TRANS = {
         'advice_ok': "✅ Good to go.",
         'advice_warn': "⚠️ Take it easy today.",
         'advice_stop': "🛑 Rest day recommended.",
-        
-        # Activity Report
         'rep_title': "🏃 **REPORT**",
         'sec_main': "⏱️ **MAIN STATS**",
         'sec_cardio': "❤️ **CARDIO & LOAD**",
@@ -147,17 +129,13 @@ TRANS = {
     }
 }
 
-# Select language based on Env Var (Fallback to Spanish)
-# Seleccionar idioma basado en variable de entorno (Fallback a Español)
 T = TRANS.get(LANG_CODE, TRANS['es'])
 
-
 # ==============================================================================
-# HELPER FUNCTIONS / FUNCIONES DE AYUDA
+# HELPER FUNCTIONS
 # ==============================================================================
 
 def format_time(seconds):
-    """Seconds to MM:SS or HH:MM:SS / Segundos a MM:SS"""
     if not seconds: return "00:00"
     m, s = divmod(int(seconds), 60)
     if m >= 60:
@@ -166,21 +144,18 @@ def format_time(seconds):
     return f"{m:02}:{s:02}"
 
 def format_duration_hm(seconds):
-    """Seconds to Xh Ym / Segundos a Xh Ym"""
     if not seconds: return "-"
     h = int(seconds // 3600)
     m = int((seconds % 3600) // 60)
     return f"{h}h {m}m"
 
 def format_pace(mps):
-    """Meters/sec to Min/km / Metros/seg a Min/km"""
     if not mps or mps <= 0: return "-"
     seconds_per_km = 1000 / mps
     m, s = divmod(seconds_per_km, 60)
     return f"{int(m):02}:{int(s):02}"
 
 def safe_round(val, decimals=0):
-    """Safe rounding handling None/Strings / Redondeo seguro manejando Nulos"""
     try:
         if val is None or val == "N/A": return "-"
         f = float(val)
@@ -189,7 +164,6 @@ def safe_round(val, decimals=0):
     except: return val
 
 def get_ciq_by_id(data, target_app_id, target_field_num):
-    """Extract ConnectIQ field by ID / Extraer campo ConnectIQ por ID"""
     ciq_list = data.get('connectIQMeasurements') or data.get('connectIQMeasurement', [])
     if not ciq_list: return None
     for item in ciq_list:
@@ -202,7 +176,6 @@ def get_ciq_by_id(data, target_app_id, target_field_num):
     return None
 
 def send_telegram(chat_id, text, use_markdown=True):
-    """Send message to Telegram / Enviar mensaje a Telegram"""
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {'chat_id': chat_id, 'text': text}
     if use_markdown: payload['parse_mode'] = 'Markdown'
@@ -212,7 +185,6 @@ def send_telegram(chat_id, text, use_markdown=True):
         if not response_data.get('ok'):
             error_desc = response_data.get('description', 'Unknown error')
             logging.error(f"⚠️ Telegram Error: {error_desc}")
-            # Retry as plain text if Markdown fails / Reintentar como texto plano si falla Markdown
             if use_markdown and ("parse" in error_desc.lower() or "markdown" in error_desc.lower()):
                 send_telegram(chat_id, text, use_markdown=False)
     except Exception as e: logging.error(f"Connection Error: {e}")
@@ -228,13 +200,12 @@ def get_morning_report():
         garmin.login()
         today = date.today().isoformat()
         
-        # 1. SLEEP / SUEÑO
+        # 1. SLEEP
         sleep_score, sleep_qual, sleep_secs = "-", "-", 0
         try:
             sleep_data = garmin.get_sleep_data(today)
             daily_sleep = sleep_data.get('dailySleepDTO', {})
             sleep_score = daily_sleep.get('sleepScores', {}).get('overall', {}).get('value', '-')
-            # qualifierKey suele venir en inglés (GOOD, FAIR), lo dejamos o traducimos simple
             sleep_qual = daily_sleep.get('sleepScores', {}).get('overall', {}).get('qualifierKey', '').replace('_', ' ').title()
             sleep_secs = daily_sleep.get('sleepTimeSeconds', 0)
         except: pass
@@ -248,44 +219,48 @@ def get_morning_report():
                 if values:
                     vals = [x[1] for x in values if x[1] is not None]
                     if vals: 
-                        bb_charged = max(vals) # Max charge (Morning)
-                        bb_now = vals[-1]      # Current charge
+                        bb_charged = max(vals)
+                        bb_now = vals[-1]
         except: pass
 
-        # 3. RHR (Resting Heart Rate) / FRECUENCIA EN REPOSO
+        # 3. RHR (Resting Heart Rate)
         rhr = "-"
         user_sum_data = None
         try:
             user_sum_data = garmin.get_user_summary(today)
-            if 'restingHeartRate' in user_sum_data: rhr = user_sum_data['restingHeartRate']
+            if user_sum_data and 'restingHeartRate' in user_sum_data:
+                rhr = user_sum_data['restingHeartRate']
         except: pass
 
-        # 4. TRAINING READINESS / DISPOSICIÓN DE ENTRENAMIENTO
-        # Aggressive Search / Búsqueda Agresiva
+        # 4. TRAINING READINESS (CORREGIDO PARA MANEJAR LISTAS)
         readiness = "-"
         
-        # Strategy A: Specific Endpoint / Estrategia A: Endpoint Específico
+        # Estrategia A: Endpoint Específico
         try:
             r_data = garmin.get_training_readiness(today)
             if r_data:
-                if 'score' in r_data: readiness = r_data['score']
-                elif 'trainingReadinessDynamicDTO' in r_data:
-                    readiness = r_data['trainingReadinessDynamicDTO'].get('score', '-')
+                # FIX: Si es lista, tomamos el elemento 0 (más reciente)
+                if isinstance(r_data, list) and len(r_data) > 0:
+                    readiness = r_data[0].get('score', '-')
+                # FIX: Si es diccionario (backup antiguo)
+                elif isinstance(r_data, dict):
+                    if 'score' in r_data: readiness = r_data['score']
+                    elif 'trainingReadinessDynamicDTO' in r_data:
+                        readiness = r_data['trainingReadinessDynamicDTO'].get('score')
         except: pass
 
-        # Strategy B: User Summary (Backup) / Estrategia B: Resumen de Usuario
-        if readiness == "-":
+        # Estrategia B: User Summary Backup
+        if readiness == "-" and user_sum_data:
             try:
-                # If we failed to get user_sum before, try now / Si fallamos antes, intentar ahora
-                if not user_sum_data: user_sum_data = garmin.get_user_summary(today)
-                if user_sum_data:
-                    if 'trainingReadinessDynamicDTO' in user_sum_data:
-                        readiness = user_sum_data['trainingReadinessDynamicDTO'].get('score', '-')
-                    elif 'trainingReadiness' in user_sum_data:
-                        readiness = user_sum_data['trainingReadiness']
+                if 'trainingReadinessDynamicDTO' in user_sum_data:
+                    readiness = user_sum_data['trainingReadinessDynamicDTO'].get('score')
+                elif 'trainingReadiness' in user_sum_data:
+                    readiness = user_sum_data['trainingReadiness']
             except: pass
             
-        # 5. HRV / VFC
+        if readiness is None: readiness = "-"
+
+        # 5. HRV
         hrv_status, hrv_avg = "-", "-"
         try:
             hrv_data = garmin.get_hrv_data(today) 
@@ -295,7 +270,7 @@ def get_morning_report():
                 hrv_avg = summary.get('weeklyAvg', '-')
         except: pass
 
-        # Build Message / Construir Mensaje
+        # Construir Mensaje
         msg = f"{T['morning_title']}: {today}\n\n"
         msg += f"{T['sleep']}: {sleep_score}/100 ({sleep_qual})\n"
         msg += f"   {T['duration']}: {format_duration_hm(sleep_secs)}\n\n"
@@ -303,7 +278,6 @@ def get_morning_report():
         msg += f"{T['heart']}:\n   {T['rhr']}: {rhr} ppm\n   {T['hrv']}: {hrv_status} ({hrv_avg} ms)\n\n"
         msg += f"{T['readiness']}: {readiness}/100\n"
         
-        # Advice Logic / Lógica de Consejo
         try:
             if readiness != "-":
                 r_val = int(readiness)
@@ -344,13 +318,11 @@ def process_report(data, zones_raw, splits_raw):
     s = data.get('summaryDTO', {})
     total_duration = s.get("duration", 0)
     
-    # Location & Elevation / Ubicación y Elevación
     location = data.get("locationName", "-")
     min_elev = safe_round(s.get("minElevation"), 0)
     max_elev = safe_round(s.get("maxElevation"), 0)
     loc_str = f"{location} ({max_elev} m)" if min_elev != "-" else location
 
-    # Global Metrics / Métricas Globales
     metrics = {
         "fecha": s.get("startTimeLocal", "").replace("T", " "),
         "lugar_completo": loc_str,
@@ -376,22 +348,18 @@ def process_report(data, zones_raw, splits_raw):
         "gap_ms": s.get("avgGradeAdjustedSpeed")
     }
     
-    # RPE & Feeling (Localized) / Sensación (Localizada)
     rpe_raw = s.get("directWorkoutRpe")
     metrics['rpe'] = safe_round(rpe_raw / 10, 0) if rpe_raw else "__"
     feel_raw = s.get("directWorkoutFeel")
-    
     feel_map = T['feel_map']
     if feel_raw is not None:
         metrics['feeling'] = feel_map[min(feel_map.keys(), key=lambda k: abs(k-feel_raw))]
     else:
         metrics['feeling'] = "-"
     
-    # EF Global
     ciq_ef = get_ciq_by_id(data, EF_APP_ID, EF_FIELD_NUM_GLOBAL)
     metrics['ef'] = f"{ciq_ef:.2f}" if ciq_ef else "-"
     
-    # Zones / Zonas
     zones_list = []
     if zones_raw:
         zones_sorted = sorted(zones_raw, key=lambda x: x['zoneNumber'])
@@ -408,10 +376,8 @@ def process_report(data, zones_raw, splits_raw):
                 zones_list.append(f"  * Z{z_num} ({range_str}): {pct:.0f}% ({format_time(secs)})")
     metrics['zonas_txt'] = "\n".join(zones_list) if zones_list else "---"
     
-    # Splits Processing / Procesamiento de Vueltas
     clean_laps = []
     source_list = []
-    # Logic: Prioritize /splits/lapDTOs -> data['laps'] -> data['splitSummaries']
     if splits_raw and 'lapDTOs' in splits_raw and len(splits_raw['lapDTOs']) > 0:
         source_list = splits_raw['lapDTOs']
     elif 'laps' in data and len(data['laps']) > 0:
@@ -439,7 +405,6 @@ def process_report(data, zones_raw, splits_raw):
     return metrics
 
 def generate_markdown(m):
-    # Cabeceras de tabla traducidas (compactas)
     laps_table = "```\n"
     laps_table += f"| #  | km   | {T['lbl_pace']} | {T['lbl_gap']}   | FC  | {T['lbl_cad']} | {T['lbl_gct']} | EF  |\n"
     laps_table += "|----|------|-------|-------|-----|-----|-----|-----|\n"
@@ -453,7 +418,6 @@ def generate_markdown(m):
         cad = str(l['cad']).rjust(3)
         gct = str(l['gct']).rjust(3)
         ef = str(l['ef']).rjust(4)
-        
         laps_table += f"| {nr} | {dist} | {ritmo} | {gap} | {fc} | {cad} | {gct} | {ef} |\n"
     
     laps_table += "```"
@@ -485,17 +449,8 @@ EF: `{m['ef']}` | {T['lbl_pow']}: `{m['potencia']} W` | {T['lbl_cal']}: `{m['cal
 RPE: {m['rpe']}/10 | {T['lbl_sens']}: {m['feeling']}
     """
 
-# ==============================================================================
-# ENTRY POINT / PUNTO DE ENTRADA (WEBHOOK)
-# ==============================================================================
-
+# --- ENTRY POINT ---
 def telegram_webhook(request):
-    """
-    Main entry point for Google Cloud Functions.
-    Handles Telegram Webhooks and Siri/Shortcut GET requests.
-    """
-    
-    # --- SIRI / SHORTCUTS HANDLER ---
     siri_mode = request.args.get('siri') or request.args.get('source') == 'siri'
     command_arg = request.args.get('command')
     headers = {'Content-Type': 'text/plain; charset=utf-8'}
@@ -503,7 +458,6 @@ def telegram_webhook(request):
     if siri_mode and command_arg:
         text = command_arg.strip().lower()
         try:
-            # Comandos bilingües
             if text in ['mañana', 'morning', 'reporte', 'dia', 'report']:
                 return get_morning_report(), 200, headers
             elif text in ['menu', 'lista', 'historial', 'list', 'history']:
@@ -511,7 +465,6 @@ def telegram_webhook(request):
             else:
                 try:
                     idx = int(text)
-                    # Login again for Siri thread
                     garmin = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
                     garmin.login()
                     activities = garmin.get_activities(idx, 1)
@@ -529,14 +482,12 @@ def telegram_webhook(request):
                 except: return "Command not found", 200, headers
         except Exception as e: return f"Siri Error: {str(e)}", 500, headers
 
-    # --- TELEGRAM HANDLER ---
     req = request.get_json(silent=True)
     if not req or 'message' not in req: return 'OK', 200
 
     chat_id = req['message']['chat']['id']
     text = req['message'].get('text', '').strip().lower()
 
-    # Commands / Comandos
     if text in ['mañana', 'morning', 'buenos dias', 'reporte', 'report']:
         send_telegram(chat_id, T['loading_vital'], use_markdown=False)
         send_telegram(chat_id, get_morning_report())
@@ -547,7 +498,6 @@ def telegram_webhook(request):
         send_telegram(chat_id, get_activity_menu())
         return 'OK', 200
 
-    # Activity by Index / Actividad por Índice
     try:
         activity_index = int(text)
         send_telegram(chat_id, T['loading_1'], use_markdown=False)
