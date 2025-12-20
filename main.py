@@ -58,9 +58,10 @@ def get_activity_data(index=0):
     try:
         # Importante: En Cloud Functions solo /tmp es escribible
         # garminconnect intenta guardar tokens, así que le damos una ruta válida o login directo
-        garmin = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
+        # Corrección: Usar /tmp para guardar tokens en Cloud Run
+        garmin = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD, token_store='/tmp')
         garmin.login()
-        
+
         # Obtener actividad por índice
         activities = garmin.get_activities(index, 1)
         if not activities: return None, None, None
