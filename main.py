@@ -7,8 +7,6 @@ from datetime import date
 from garminconnect import Garmin
 
 # --- HACK PARA CLOUD RUN ---
-# Engañamos a la librería para que use /tmp como directorio de usuario
-# Esto evita el error "Read-only file system" al guardar tokens.
 os.environ['HOME'] = '/tmp'
 
 # --- CONFIGURACIÓN ---
@@ -16,7 +14,7 @@ GARMIN_EMAIL = os.environ.get('GARMIN_EMAIL')
 GARMIN_PASSWORD = os.environ.get('GARMIN_PASSWORD')
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
 
-# Configuración EF (Connect IQ)
+# Configuración EF
 EF_APP_ID = "e9f83886-2e1d-448e-aa0a-0cdfb9160df9"
 EF_FIELD_NUM_GLOBAL = 2
 EF_FIELD_NUM_LAP = 1
@@ -33,7 +31,6 @@ def format_time(seconds):
     return f"{m:02}:{s:02}"
 
 def format_duration_hm(seconds):
-    """Formato Xh Ym para sueño"""
     if not seconds: return "-"
     h = int(seconds // 3600)
     m = int((seconds % 3600) // 60)
@@ -51,8 +48,7 @@ def safe_round(val, decimals=0):
         f = float(val)
         if decimals == 0: return int(round(f))
         return round(f, decimals)
-    except:
-        return val
+    except: return val
 
 def get_ciq_by_id(data, target_app_id, target_field_num):
     ciq_list = data.get('connectIQMeasurements') or data.get('connectIQMeasurement', [])
@@ -67,38 +63,28 @@ def get_ciq_by_id(data, target_app_id, target_field_num):
     return None
 
 def send_telegram(chat_id, text, use_markdown=True):
-    """Envia mensaje a Telegram con reintento en texto plano si falla el Markdown"""
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {'chat_id': chat_id, 'text': text}
-    if use_markdown:
-        payload['parse_mode'] = 'Markdown'
-    
+    if use_markdown: payload['parse_mode'] = 'Markdown'
     try:
         response = requests.post(url, json=payload)
         response_data = response.json()
         if not response_data.get('ok'):
             error_desc = response_data.get('description', 'Unknown error')
             logging.error(f"⚠️ Telegram rechazó mensaje: {error_desc}")
-            # Si falla por formato Markdown, reintentamos como texto plano
             if use_markdown and ("parse" in error_desc.lower() or "markdown" in error_desc.lower()):
                 send_telegram(chat_id, text, use_markdown=False)
-    except Exception as e:
-        logging.error(f"Error conexión Telegram: {e}")
+    except Exception as e: logging.error(f"Error Telegram: {e}")
 
-# --- LÓGICA REPORTE MATUTINO ---
-
+# --- REPORTE MATUTINO MEJORADO ---
 def get_morning_report():
-    """Obtiene sueño, body battery, HRV, RHR y readiness de HOY"""
     try:
         garmin = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
         garmin.login()
-        
-        today = date.today().isoformat() # YYYY-MM-DD
+        today = date.today().isoformat()
         
         # 1. SUEÑO
-        sleep_score = "-"
-        sleep_qual = "-"
-        sleep_secs = 0
+        sleep_score, sleep_qual, sleep_secs = "-", "-", 0
         try:
             sleep_data = garmin.get_sleep_data(today)
             daily_sleep = sleep_data.get('dailySleepDTO', {})
@@ -108,35 +94,50 @@ def get_morning_report():
         except: pass
         
         # 2. BODY BATTERY
-        bb_charged = "-"
-        bb_now = "-"
+        bb_charged, bb_now = "-", "-"
         try:
             bb_data = garmin.get_body_battery(today)
             if bb_data:
                 values = bb_data[0].get('bodyBatteryValuesArray', [])
                 if values:
-                     # Buscamos valores válidos
                      vals = [x[1] for x in values if x[1] is not None]
                      if vals: 
-                         bb_charged = max(vals) # Máximo del día (carga tras dormir)
-                         bb_now = vals[-1]      # Último valor registrado
+                         bb_charged = max(vals)
+                         bb_now = vals[-1]
         except: pass
 
-        # 3. USER SUMMARY (RHR & READINESS BACKUP)
+        # 3. RHR (CORAZÓN EN REPOSO)
         rhr = "-"
-        readiness = "-"
-        
         try:
             user_sum = garmin.get_user_summary(today)
-            if 'restingHeartRate' in user_sum:
-                rhr = user_sum['restingHeartRate']
-            if 'trainingReadiness' in user_sum:
-                readiness = user_sum['trainingReadiness']
+            if 'restingHeartRate' in user_sum: rhr = user_sum['restingHeartRate']
         except: pass
 
-        # 4. HRV & READINESS (ENDPOINTS ESPECÍFICOS)
-        hrv_status = "-"
-        hrv_avg = "-"
+        # 4. READINESS (BÚSQUEDA PROFUNDA)
+        readiness = "-"
+        # Intento A: Endpoint directo (Estructura variable)
+        try:
+            r_data = garmin.get_training_readiness(today)
+            if r_data:
+                # A veces viene directo {'score': 90}
+                if 'score' in r_data: readiness = r_data['score']
+                # A veces anidado {'trainingReadinessDynamicDTO': {'score': 90}}
+                elif 'trainingReadinessDynamicDTO' in r_data:
+                    readiness = r_data['trainingReadinessDynamicDTO'].get('score', '-')
+        except: pass
+
+        # Intento B: User Summary (Backup si el endpoint falla)
+        if readiness == "-":
+            try:
+                if 'user_sum' not in locals(): user_sum = garmin.get_user_summary(today)
+                if 'trainingReadinessDynamicDTO' in user_sum:
+                     readiness = user_sum['trainingReadinessDynamicDTO'].get('score', '-')
+                elif 'trainingReadiness' in user_sum:
+                     readiness = user_sum['trainingReadiness']
+            except: pass
+
+        # 5. HRV
+        hrv_status, hrv_avg = "-", "-"
         try:
             hrv_data = garmin.get_hrv_data(today) 
             if hrv_data and 'hrvSummary' in hrv_data:
@@ -145,50 +146,32 @@ def get_morning_report():
                 hrv_avg = summary.get('weeklyAvg', '-')
         except: pass
 
-        # Si readiness no salió del user summary, probamos endpoint directo
-        if readiness == "-":
-            try:
-                readiness_data = garmin.get_training_readiness(today)
-                if readiness_data: readiness = readiness_data.get('score', '-')
-            except: pass
-
-        # --- GENERAR TEXTO ---
         msg = f"🌅 **Reporte Matutino: {today}**\n\n"
-        
         msg += f"💤 **Sueño:** {sleep_score}/100 ({sleep_qual})\n"
         msg += f"   ⏱️ Duración: {format_duration_hm(sleep_secs)}\n\n"
-        
         msg += f"🔋 **Body Battery:** Carga máx: {bb_charged} | Actual: {bb_now}\n"
+        msg += f"💓 **Corazón:**\n   ❤️ RHR: {rhr} ppm\n   📉 VFC: {hrv_status} ({hrv_avg} ms)\n\n"
+        msg += f"🚦 **Disposición (Readiness):** {readiness}/100\n"
         
-        msg += f"💓 **Corazón:**\n"
-        msg += f"   ❤️ RHR (Reposo): {rhr} ppm\n"
-        msg += f"   📉 VFC (HRV): {hrv_status} ({hrv_avg} ms)\n\n"
-        
-        msg += f"🚦 **Disposición Entrenar:** {readiness}/100\n"
-        
-        # Consejo dinámico
         try:
             r_val = int(readiness)
-            if r_val >= 80: msg += "   🚀 ¡Dale duro! Estás a tope."
-            elif r_val >= 60: msg += "   ✅ Buen día para entrenar."
-            elif r_val >= 40: msg += "   ⚠️ Modera la intensidad."
-            else: msg += "   🛑 Descanso activo o total recomendado."
-        except: pass
+            if r_val >= 85: msg += "   🚀 ¡A VOLAR! Estás a tope."
+            elif r_val >= 65: msg += "   ✅ Luz verde para entrenar."
+            elif r_val >= 45: msg += "   ⚠️ Baja la carga hoy."
+            else: msg += "   🛑 Descansa, soldado."
+        except: 
+            msg += "   (Sincroniza tu reloj para ver el dato)"
 
         return msg
+    except Exception as e: return f"❌ Error: {str(e)}"
 
-    except Exception as e:
-        return f"❌ Error obteniendo reporte matutino: {str(e)}"
-
-# --- LÓGICA DE CARRERAS (Procesamiento y Markdown) ---
-
+# --- LÓGICA DE CARRERAS ---
 def get_activity_menu():
     try:
         garmin = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
         garmin.login()
-        activities = garmin.get_activities(0, 5) # Trae las últimas 5
-        if not activities: return "❌ No encontré actividades recientes."
-        
+        activities = garmin.get_activities(0, 5)
+        if not activities: return "❌ No encontré actividades."
         msg = "📋 **Últimas Actividades:**\n\n"
         for i, act in enumerate(activities):
             start = act.get("startTimeLocal", "")[:16].replace("T", " ")
@@ -196,16 +179,13 @@ def get_activity_menu():
             type_key = act.get("activityType", {}).get("typeKey", "activity")
             dist_km = act.get("distance", 0) / 1000
             msg += f"`{i}` - *{start}*\n   🏃 {type_key} | 📏 {dist_km:.2f} km\n   📝 {name}\n\n"
-        
-        msg += "👉 *Envía el número (0, 1...) para ver el reporte completo.*"
+        msg += "👉 *Envía el número (0, 1...) para ver detalles.*"
         return msg
-    except Exception as e: return f"❌ Error obteniendo menú: {str(e)}"
+    except Exception as e: return f"❌ Error menú: {str(e)}"
 
 def process_report(data, zones_raw, splits_raw):
     s = data.get('summaryDTO', {})
     total_duration = s.get("duration", 0)
-    
-    # Ubicación
     location = data.get("locationName", "Ubicación desconocida")
     min_elev = safe_round(s.get("minElevation"), 0)
     max_elev = safe_round(s.get("maxElevation"), 0)
@@ -235,15 +215,12 @@ def process_report(data, zones_raw, splits_raw):
         "ascenso": safe_round(s.get("elevationGain", 0), 0),
         "gap_ms": s.get("avgGradeAdjustedSpeed")
     }
-    
     rpe_raw = s.get("directWorkoutRpe")
     metrics['rpe'] = safe_round(rpe_raw / 10, 0) if rpe_raw else "__"
     feel_raw = s.get("directWorkoutFeel")
     metrics['feeling'] = FEELING_MAP[min(FEELING_MAP.keys(), key=lambda k: abs(k-feel_raw))] if feel_raw is not None else "Normal"
-    
     ciq_ef = get_ciq_by_id(data, EF_APP_ID, EF_FIELD_NUM_GLOBAL)
     metrics['ef'] = f"{ciq_ef:.2f}" if ciq_ef else "-"
-    
     zones_list = []
     if zones_raw:
         zones_sorted = sorted(zones_raw, key=lambda x: x['zoneNumber'])
@@ -254,30 +231,24 @@ def process_report(data, zones_raw, splits_raw):
             if i < len(zones_sorted) - 1:
                 next_low = int(zones_sorted[i+1].get('zoneLowBoundary', 0))
                 range_str = f"{low_bound}-{next_low - 1} ppm"
-            else:
-                range_str = f">{low_bound} ppm"
+            else: range_str = f">{low_bound} ppm"
             if secs > 0:
                 pct = (secs / metrics['duracion']) * 100 if metrics['duracion'] > 0 else 0
                 zones_list.append(f"  * Z{z_num} ({range_str}): {pct:.0f}% ({format_time(secs)})")
     metrics['zonas_txt'] = "\n".join(zones_list) if zones_list else "Sin datos de zonas."
-    
     clean_laps = []
     source_list = []
     if splits_raw and 'lapDTOs' in splits_raw and len(splits_raw['lapDTOs']) > 0:
         source_list = splits_raw['lapDTOs']
     elif 'laps' in data and len(data['laps']) > 0:
         source_list = data['laps']
-    else:
-        source_list = data.get('splitSummaries', [])
-        
+    else: source_list = data.get('splitSummaries', [])
     for i, split in enumerate(source_list):
         dist = split.get("distance", 0)
         dur = split.get("duration", 0)
-        # Filtros para vueltas basura
         if dist < 10 and dur < 10: continue
         if "splitSummaries" in str(source_list) and len(source_list) > 1:
              if abs(dur - total_duration) < 2.0: continue
-        
         clean_laps.append({
             "nr": len(clean_laps) + 1,
             "dist": dist,
@@ -299,7 +270,6 @@ def generate_markdown(m):
     laps_table = "| # | km | Rit | GAP | FC | Cad | GCT | EF |\n|---|---|---|---|---|---|---|---|\n"
     for l in m['laps']:
         laps_table += f"| {l['nr']} | {(l['dist']/1000):.2f} | {l['ritmo']} | {l['gap']} | {l['fc']} | {l['cad']} | {l['gct']} | {l['ef']} |\n"
-    
     return f"""
 # 🏃 Reporte: {m['tipo']}
 📅 {m['fecha']}
@@ -329,75 +299,55 @@ GCT: {m['gct']} ms | Osc.V: {m['osc_v']} cm ({m['ratio_v']}%)
 RPE: {m['rpe']}/10 | Sensación: {m['feeling']}
     """
 
-# --- ENTRY POINT (WEBHOOK) ---
+# --- ENTRY POINT ---
 def telegram_webhook(request):
-    """Función principal que recibe las peticiones de Telegram"""
     req = request.get_json()
     if not req or 'message' not in req: return 'OK', 200
-
     chat_id = req['message']['chat']['id']
     text = req['message'].get('text', '').strip().lower()
 
-    # CASO 1: REPORTE MATUTINO
     if text in ['mañana', 'buenos dias', 'morning', 'reporte', 'dia']:
-        send_telegram(chat_id, "⏳ Obteniendo signos vitales de hoy...", use_markdown=False)
-        morning_msg = get_morning_report()
-        send_telegram(chat_id, morning_msg)
+        send_telegram(chat_id, "⏳ Obteniendo signos vitales...", use_markdown=False)
+        msg = get_morning_report()
+        send_telegram(chat_id, msg)
         return 'OK', 200
 
-    # CASO 2: MENÚ DE ACTIVIDADES
-    if text in ['menu', 'lista', 'historial', 'actividades']:
+    if text in ['menu', 'lista', 'historial']:
         send_telegram(chat_id, "⏳ Consultando historial...", use_markdown=False)
-        menu_msg = get_activity_menu()
-        send_telegram(chat_id, menu_msg)
+        msg = get_activity_menu()
+        send_telegram(chat_id, msg)
         return 'OK', 200
 
-    # CASO 3: REPORTE DE CARRERA (Por índice 0, 1, 2...)
     try:
-        activity_index = int(text)
-    except ValueError:
-        # Si no es un comando ni un número, enviamos ayuda
-        help_msg = (
-            "🤖 **Comandos del Bot:**\n\n"
-            "☀️ `mañana` : Reporte de salud matutino (Sueño, RHR, HRV).\n"
-            "📋 `lista` : Últimas carreras.\n"
-            "🔢 `0` : Reporte detallado de la última actividad."
-        )
-        send_telegram(chat_id, help_msg)
-        return 'OK', 200 
-
-    # Proceso de reporte de actividad
-    send_telegram(chat_id, "⏳ 1/3 Conectando...", use_markdown=False)
-    try:
+        idx = int(text)
+        send_telegram(chat_id, "⏳ 1/3 Conectando...", use_markdown=False)
         garmin = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
         garmin.login()
         send_telegram(chat_id, "✅ 2/3 Descargando...", use_markdown=False)
-
-        activities = garmin.get_activities(activity_index, 1)
-        if not activities:
-            send_telegram(chat_id, "❌ No encontré esa actividad.", use_markdown=False)
+        
+        acts = garmin.get_activities(idx, 1)
+        if not acts:
+            send_telegram(chat_id, "❌ No encontré esa actividad.")
             return 'OK', 200
-        
-        last = activities[0]
-        act_id = last['activityId']
-        
-        details = garmin.get_activity(act_id)
-        # Intentamos obtener zonas y splits, si falla no bloqueamos el reporte
-        try: zones = garmin.connectapi(f"/activity-service/activity/{act_id}/hrTimeInZones")
-        except: zones = []
-        try: splits = garmin.connectapi(f"/activity-service/activity/{act_id}/splits")
-        except: splits = {}
-
-        if details:
-            metrics = process_report(details, zones, splits)
-            report = generate_markdown(metrics)
-            send_telegram(chat_id, report)
-        else:
-            send_telegram(chat_id, "❌ Error: Actividad vacía.", use_markdown=False)
             
+        aid = acts[0]['activityId']
+        details = garmin.get_activity(aid)
+        try: zones = garmin.connectapi(f"/activity-service/activity/{aid}/hrTimeInZones")
+        except: zones = []
+        try: splits = garmin.connectapi(f"/activity-service/activity/{aid}/splits")
+        except: splits = {}
+        
+        if details:
+            m = process_report(details, zones, splits)
+            rep = generate_markdown(m)
+            send_telegram(chat_id, rep)
+        else: send_telegram(chat_id, "❌ Actividad vacía.")
+            
+    except ValueError:
+        help_msg = "🤖 *Comandos:*\n☀️ `mañana` (Salud)\n📋 `lista` (Historial)\n🔢 `0` (Último entreno)"
+        send_telegram(chat_id, help_msg)
     except Exception as e:
-        error_trace = traceback.format_exc()
-        logging.error(f"ERROR: {error_trace}")
+        logging.error(f"FATAL: {traceback.format_exc()}")
         send_telegram(chat_id, f"🔥 Error: {str(e)}", use_markdown=False)
 
     return 'OK', 200
