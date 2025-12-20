@@ -5,9 +5,7 @@ import requests
 import traceback
 from garminconnect import Garmin
 
-# --- HACK PARA CLOUD RUN (IMPORTANTE) ---
-# Engañamos a la librería para que crea que /tmp es el directorio del usuario.
-# Esto permite que guarde los tokens de sesión sin error de "Read-only file system".
+# --- HACK PARA CLOUD RUN ---
 os.environ['HOME'] = '/tmp'
 
 # --- CONFIGURACIÓN ---
@@ -58,18 +56,35 @@ def get_ciq_by_id(data, target_app_id, target_field_num):
         except: continue
     return None
 
-def send_telegram(chat_id, text):
-    """Envia mensaje a Telegram"""
+def send_telegram(chat_id, text, use_markdown=True):
+    """Envia mensaje a Telegram con reintento en Texto Plano si falla el Markdown"""
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    
     payload = {
         'chat_id': chat_id,
-        'text': text,
-        'parse_mode': 'Markdown' 
+        'text': text
     }
+    if use_markdown:
+        payload['parse_mode'] = 'Markdown' # Usamos Markdown V1 (menos estricto que V2)
+
     try:
-        requests.post(url, json=payload)
+        response = requests.post(url, json=payload)
+        response_data = response.json()
+        
+        if not response_data.get('ok'):
+            error_desc = response_data.get('description', 'Unknown error')
+            logging.error(f"⚠️ Telegram rechazó el mensaje: {error_desc}")
+            
+            # Si falló por formato, reintentar como texto plano
+            if use_markdown and ("parse" in error_desc.lower() or "markdown" in error_desc.lower()):
+                logging.info("🔄 Reintentando envío como Texto Plano...")
+                send_telegram(chat_id, text, use_markdown=False)
+            else:
+                # Si falla por otra cosa (ej. mensaje muy largo), avisar
+                if "too long" in error_desc.lower():
+                     requests.post(url, json={'chat_id': chat_id, 'text': "❌ Error: El reporte es demasiado largo para Telegram."})
     except Exception as e:
-        print(f"Error enviando a Telegram: {e}")
+        logging.error(f"Error de conexión con Telegram: {e}")
 
 # --- LÓGICA CORE ---
 def process_report(data, zones_raw, splits_raw):
@@ -176,8 +191,12 @@ def process_report(data, zones_raw, splits_raw):
 
 def generate_markdown(m):
     laps_table = ""
+    # Header compacto para movil
+    laps_table += "| # | km | Rit | GAP | FC | Cad | GCT | EF |\n"
+    laps_table += "|---|---|---|---|---|---|---|---|\n"
+    
     for l in m['laps']:
-        laps_table += f"| {l['nr']} | {(l['dist']/1000):.2f} | {l['ritmo']} | {l['gap']} | {l['ritmo_max']} | {l['ascenso']} | {l['fc']} | {l['fc_max']} | {l['cad']} | {l['gct']} | {l['vr']} | {l['ef']} |\n"
+        laps_table += f"| {l['nr']} | {(l['dist']/1000):.2f} | {l['ritmo']} | {l['gap']} | {l['fc']} | {l['cad']} | {l['gct']} | {l['ef']} |\n"
     
     return f"""
 # 🏃 Reporte: {m['tipo']}
@@ -203,8 +222,6 @@ Cad: {m['cadencia']} | Zancada: {m['zancada']} cm
 GCT: {m['gct']} ms | Osc.V: {m['osc_v']} cm ({m['ratio_v']}%)
 
 📊 *SPLITS*
-| # | km | Ritmo | GAP | Max | Asc | FC | Max | Cad | GCT | VR | EF |
-|---|---|---|---|---|---|---|---|---|---|---|---|
 {laps_table}
 
 RPE: {m['rpe']}/10 | Sensación: {m['feeling']}
@@ -212,9 +229,6 @@ RPE: {m['rpe']}/10 | Sensación: {m['feeling']}
 
 # --- ENTRY POINT ---
 def telegram_webhook(request):
-    """
-    Función que recibe el POST de Telegram
-    """
     req = request.get_json()
     if not req or 'message' not in req:
         return 'OK', 200
@@ -228,23 +242,25 @@ def telegram_webhook(request):
         return 'OK', 200 
 
     # 1. AVISO DE INICIO
-    send_telegram(chat_id, "⏳ 1/3 Iniciando conexión con Garmin...")
+    logging.info("Iniciando proceso...")
+    send_telegram(chat_id, "⏳ 1/3 Conectando a Garmin...", use_markdown=False)
 
     try:
-        # --- LOGIN (CORREGIDO) ---
-        # Volvemos a la llamada estándar, porque ya configuramos HOME=/tmp arriba
+        # --- LOGIN ---
         garmin = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
         garmin.login()
-        send_telegram(chat_id, "✅ 2/3 Login exitoso. Descargando datos...")
+        logging.info("Login exitoso")
+        send_telegram(chat_id, "✅ 2/3 Descargando actividad...", use_markdown=False)
 
         # --- DESCARGA ---
         activities = garmin.get_activities(activity_index, 1)
         if not activities:
-            send_telegram(chat_id, "❌ No se encontraron actividades recientes.")
+            send_telegram(chat_id, "❌ No se encontró actividad.", use_markdown=False)
             return 'OK', 200
         
         last = activities[0]
         act_id = last['activityId']
+        logging.info(f"Procesando actividad ID: {act_id}")
         
         details = garmin.get_activity(act_id)
         
@@ -257,21 +273,16 @@ def telegram_webhook(request):
         if details:
             metrics = process_report(details, zones, splits)
             report = generate_markdown(metrics)
+            
+            logging.info("Enviando reporte final...")
+            # Aquí es donde fallaba antes, ahora tenemos reintento automático
             send_telegram(chat_id, report)
         else:
-            send_telegram(chat_id, "❌ Error: La actividad no tiene detalles.")
+            send_telegram(chat_id, "❌ Error: Actividad sin detalles.", use_markdown=False)
             
     except Exception as e:
-        # CAPTURA DE ERROR EXPLÍCITA PARA TELEGRAM
         error_trace = traceback.format_exc()
-        short_error = str(e)
-        
-        error_msg = f"🔥 **ERROR CRÍTICO** 🔥\n\n`{short_error}`"
-        
-        if "authentication" in short_error.lower() or "401" in short_error:
-            error_msg += "\n\n⚠️ **Posible causa:** Contraseña incorrecta o Garmin pide código 2FA."
-        
-        send_telegram(chat_id, error_msg)
-        logging.error(error_trace)
+        logging.error(f"FATAL ERROR: {error_trace}")
+        send_telegram(chat_id, f"🔥 Error Crítico: {str(e)}", use_markdown=False)
 
     return 'OK', 200
