@@ -1,124 +1,127 @@
+<!-- Pega esto al inicio del archivo en Inglés -->
+[![Es](https://img.shields.io/badge/Lang-Español-red)](README_ES.md)
+
 # 🏃‍♂️ Garmin Telegram Bot (Serverless)
 
-> **Un bot de Telegram avanzado y completamente Serverless** que se conecta a la **API privada de Garmin Connect** para generar reportes deportivos detallados y métricas de salud matutinas.
+> **An advanced, fully serverless Telegram bot** that connects to the **private Garmin Connect API** to generate detailed sports reports and morning health metrics.
 
-📦 **Infraestructura**: Google Cloud Run + Docker
-💸 **Costo**: $0.00 USD (Free Tier)
-🔁 **CI/CD**: Integrado con GitHub
-🧠 **Output**: Reportes técnicos en Markdown listos para LLMs
+📦 **Infrastructure**: Google Cloud Run + Docker
+💸 **Cost**: $0.00 USD (Free Tier)
+🔁 **CI/CD**: Integrated with GitHub
+🧠 **Output**: Technical Markdown reports ready for LLMs
 
 ---
 
-## 💡 Origen: El eslabón perdido del *AI Coaching*
+## 💡 Origin: The Missing Link in *AI Coaching*
 
-Este proyecto nació de una necesidad personal: **entrenar con un Coach de IA (LLM)**.
+This project was born from a personal need: **training with an AI Coach (LLM)**.
 
-Antes, el flujo era manual y tedioso:
+Previously, the workflow was manual and tedious:
 
-1. Terminar de correr
-2. Tomar capturas de pantalla de Garmin
-3. Subirlas a un chat de IA
-4. Esperar que el OCR no alucinara datos
+1. Finish a run
+2. Take screenshots from the Garmin app
+3. Upload them to an AI chat
+4. Hope OCR didn’t hallucinate the data
 
-👉 **Este bot automatiza todo el proceso.**
+👉 **This bot fully automates the process.**
 
-Extrae los **datos crudos (JSON)** directamente de los servidores de Garmin y genera un **reporte técnico en Markdown puro**, estructurado específicamente para copiar y pegar en tu LLM de confianza:
+It extracts **raw data (JSON)** directly from Garmin’s servers and generates a **pure Markdown technical report**, specifically structured to be copy-pasted into your LLM of choice:
 
 * ChatGPT
 * Claude
 * Gemini
 
-De esta forma, tu *Coach IA* accede a métricas profundas (**HRV, Efficiency Factor, Splits reales**) **sin alucinaciones ni errores de OCR**.
+This allows your *AI Coach* to access deep metrics (**HRV, Efficiency Factor, real Splits**) **without hallucinations or OCR errors**.
 
 ---
 
-## 🚀 Características
+## 🚀 Features
 
-### 📊 1. Reporte de Carrera (*Formato “Coach Ready”*)
+### 📊 1. Running Report (*“Coach Ready” Format*)
 
-Envía el índice de la actividad (`0` = última, `1` = anterior, etc.) y recibe un análisis profundo:
+Send the activity index (`0` = latest, `1` = previous, etc.) and receive a deep analysis:
 
-**Resumen**
+**Summary**
 
-* Distancia
-* Tiempo
-* Ritmo
-* GAP (Ritmo Ajustado a Pendiente)
-* Ascenso
+* Distance
+* Time
+* Pace
+* GAP (Grade Adjusted Pace)
+* Elevation gain
 
 **Cardio**
 
-* FC Media / Máx
-* Training Effect (Aeróbico / Anaeróbico)
-* Carga de entrenamiento
+* Average / Max Heart Rate
+* Training Effect (Aerobic / Anaerobic)
+* Training Load
 
-**Zonas**
+**Zones**
 
-* Distribución porcentual por zonas de FC
-* Rangos dinámicos detectados automáticamente
+* Percentage distribution by HR zones
+* Dynamically detected zone ranges
 
-**Eficiencia**
+**Efficiency**
 
 * Efficiency Factor (EF)
-* Potencia
-* Calorías
+* Power
+* Calories
 
-**Dinámicas de Carrera**
+**Running Dynamics**
 
-* Cadencia
-* Longitud de zancada
+* Cadence
+* Stride length
 * GCT (Ground Contact Time)
-* Oscilación vertical
+* Vertical oscillation
 
-**Splits (Vueltas)**
+**Splits (Laps)**
 
-* Tabla vuelta por vuelta
-* Ritmo, FC y EF por kilómetro
-
----
-
-### 🌅 2. Reporte Matutino de Salud
-
-Comando: `mañana` o `morning`
-
-Incluye:
-
-* 💤 Sueño: puntuación, calidad y duración
-* 🔋 Body Battery: carga máxima al despertar y nivel actual
-* ❤️ Corazón: RHR y HRV (VFC)
-* ⚡ Readiness: disposición para entrenar (0–100) con consejo automático
+* Detailed lap-by-lap table
+* Pace, HR, and EF per kilometer
 
 ---
 
-### 📋 3. Historial de Actividades
+### 🌅 2. Morning Health Report
 
-Comando: `lista` o `menu`
+Command: `morning`
 
-Muestra las **últimas 5 actividades** con:
+Includes:
 
-* Fecha
-* Tipo
-* Distancia
-
-Para elegir fácilmente cuál analizar.
-
----
-
-### 🎤 4. Soporte para Siri / Atajos (iOS)
-
-Endpoint compatible con peticiones **GET**, ideal para Atajos de iOS:
-
-> *“Oye Siri, reporte de hoy”*
+* 💤 Sleep: score, quality, and duration
+* 🔋 Body Battery: max charge upon waking and current level
+* ❤️ Heart: RHR and HRV
+* ⚡ Readiness: training readiness score (0–100) with automatic advice
 
 ---
 
-## 🛠️ Arquitectura
+### 📋 3. Activity History
 
-Arquitectura **Event-Driven Serverless**:
+Command: `list` or `menu`
+
+Displays the **last 5 activities** with:
+
+* Date
+* Type
+* Distance
+
+So you can easily choose which one to analyze.
+
+---
+
+### 🎤 4. Siri / iOS Shortcuts Support
+
+Endpoint compatible with **GET requests**, perfect for iOS Shortcuts:
+
+> *“Hey Siri, today’s report”*
+
+---
+
+## 🛠️ Architecture
+
+**Event-driven, serverless architecture**:
 
 ```mermaid
 graph LR
-    User((Usuario)) -- "Telegram / Siri" --> Webhook
+    User((User)) -- "Telegram / Siri" --> Webhook
     Webhook -- "POST Request" --> CloudRun[Google Cloud Run]
 
     subgraph "Google Cloud"
@@ -128,159 +131,455 @@ graph LR
     PythonApp -- "Login & Scrape" --> GarminAPI[Garmin Connect]
     GarminAPI -- "JSON Data" --> PythonApp
     PythonApp -- "Markdown Report" --> TelegramAPI
-    TelegramAPI -- "Notificación" --> User
+    TelegramAPI -- "Notification" --> User
     User -- "Copy & Paste" --> LLM_Coach[AI Coach]
 ```
 
 ---
 
-## ⚙️ Requisitos Previos
+## ⚙️ Prerequisites
 
 ### 🏃 Garmin
 
-* Cuenta de **Garmin Connect**
-* Email y contraseña
+* Garmin Connect account
+* Email and password
 
 ### 🤖 Telegram
 
-1. Habla con `@BotFather`
-2. Crea un bot nuevo
-3. Obtén el **TOKEN**
+1. Talk to `@BotFather`
+2. Create a new bot
+3. Obtain the **TOKEN**
 
 ### ☁️ Google Cloud Platform
 
-* Cuenta activa
-* APIs habilitadas:
+* Active account
+* Enabled APIs:
 
   * Cloud Run API
   * Cloud Build API
 
 ---
 
-## 🚀 Instalación y Despliegue (Paso a Paso)
+## 🚀 Installation & Deployment (Step by Step)
 
-### 1️⃣ Configuración del Repositorio
+### 1️⃣ Repository Setup
 
-Asegúrate de tener estos archivos:
+Ensure the following files exist in your repo:
 
-* `main.py` → lógica del bot
-* `requirements.txt` → dependencias
+* `main.py` → bot logic
+* `requirements.txt` → dependencies
 
   * `garminconnect`
   * `requests`
   * `functions-framework`
   * `garth`
-* `Dockerfile` → Python 3.10 Slim con UTF-8
+* `Dockerfile` → Python 3.10 Slim with UTF-8 support
 
 ---
 
-### 2️⃣ Despliegue en Google Cloud Run
+### 2️⃣ Deploy to Google Cloud Run
 
-1. Ve a **Google Cloud Console**
-2. Click en **Create Service**
-3. Selecciona **Continuously deploy from a repository**
-4. Conecta tu repo de GitHub
+1. Go to **Google Cloud Console**
+2. Click **Create Service**
+3. Select **Continuously deploy from a repository**
+4. Connect your GitHub repo
 
 **Build**
 
 * Build type: `Dockerfile`
 * Source location: `/Dockerfile`
 
-**Autenticación**
+**Authentication**
 
 * Allow unauthenticated invocations
 
-**Variables de Entorno (CRÍTICO)**
-En *Container → Networking → Security → Variables*:
+**Environment Variables (CRITICAL)**
+Under *Container → Networking → Security → Variables*:
 
 ```env
-GARMIN_EMAIL=tu_correo
-GARMIN_PASSWORD=tu_contraseña
-TELEGRAM_TOKEN=tu_token
+GARMIN_EMAIL=your_email
+GARMIN_PASSWORD=your_password
+TELEGRAM_TOKEN=your_token
 ```
 
-5. Click en **Create**
+5. Click **Create**
 
 ---
 
-### 3️⃣ Configurar el Webhook de Telegram
+### 3️⃣ Configure the Telegram Webhook
 
-Google te dará una URL como:
+After deployment, Google will provide a URL like:
 
 ```
 https://garmin-bot-xyz.a.run.app
 ```
 
-Ejecuta en tu navegador:
+Open this in your browser:
 
 ```
-https://api.telegram.org/bot<TU_TOKEN>/setWebhook?url=<TU_URL_DE_GOOGLE_CLOUD>
+https://api.telegram.org/bot<TOKEN>/setWebhook?url=<YOUR_GOOGLE_CLOUD_URL>
 ```
 
-Si recibes:
+If you see:
 
 ```json
 {"ok": true}
 ```
 
-🎉 ¡Todo listo!
+🎉 You’re good to go!
 
 ---
 
-## 📱 Guía de Uso
+## 📱 Usage Guide
 
-| Comando  | Acción                             |
-| -------- | ---------------------------------- |
-| `mañana` | Reporte matutino (Sueño, HRV, RHR) |
-| `lista`  | Menú de últimas 5 actividades      |
-| `0`      | Analiza la última actividad        |
-| `1`      | Analiza la anterior                |
-| `n`      | Analiza la actividad n             |
+| Command   | Action                                  |
+| --------- | --------------------------------------- |
+| `morning` | Morning health report (Sleep, HRV, RHR) |
+| `list`    | Show last 5 activities                  |
+| `0`       | Analyze latest activity                 |
+| `1`       | Analyze previous activity               |
+| `n`       | Analyze activity *n*                    |
 
 ---
 
-## 🤖 Integración con Siri (Opcional)
+## 🤖 Siri Integration (Optional)
 
-Crea un Atajo en iOS:
+Create an iOS Shortcut:
 
 * **URL**
 
   ```
-  <TU_URL_GOOGLE>?siri=true&command=mañana
+  <YOUR_GOOGLE_URL>?siri=true&command=morning
   ```
-* **Método**: `GET`
-* **Acción**:
+* **Method**: `GET`
+* **Action**:
 
-  * Obtener contenido de URL
-  * Leer texto
+  * Get contents of URL
+  * Speak text
 
 ---
 
-## ⚠️ Notas Técnicas
+## ⚠️ Technical Notes
 
-* **Sistema de archivos**
-  Cloud Run es *read-only*.
-  Se usa:
+* **Filesystem**
+  Google Cloud Run uses a *read-only* filesystem.
+  The script applies:
 
   ```python
   os.environ["HOME"] = "/tmp"
   ```
 
-  para guardar tokens de sesión.
+  to allow session tokens to be stored temporarily.
 
-* **Codificación**
-  El Dockerfile fuerza:
+* **Encoding**
+  The Dockerfile enforces:
 
   ```
   LANG=C.UTF-8
   ```
 
-  para soportar correctamente **acentos y emojis**.
+  to correctly handle **accents and emojis** in logs and messages.
 
 ---
 
-## 📄 Licencia
+## 📄 License
 
-Proyecto de **uso personal y educativo**.
-Libre para modificar, extender y mejorar.
+This project is for **personal and educational use**.
+Free to modify, extend, and improve.
 
+---
+
+Si quieres, el siguiente paso natural sería:
+
+* Un **README bilingüe**
+* Badges + screenshots para hacerlo más “open source friendly”
+* O una versión **portfolio-level** para mostrarlo junto a tu perfil de ingeniería
+Aquí tienes el **README completamente traducido al inglés**, manteniendo el **formato Markdown listo para copiar y pegar en GitHub**:
+
+---
+
+# 🏃‍♂️ Garmin Telegram Bot (Serverless)
+
+> **An advanced, fully serverless Telegram bot** that connects to the **private Garmin Connect API** to generate detailed sports reports and morning health metrics.
+
+📦 **Infrastructure**: Google Cloud Run + Docker
+💸 **Cost**: $0.00 USD (Free Tier)
+🔁 **CI/CD**: Integrated with GitHub
+🧠 **Output**: Technical Markdown reports ready for LLMs
+
+---
+
+## 💡 Origin: The Missing Link in *AI Coaching*
+
+This project was born from a personal need: **training with an AI Coach (LLM)**.
+
+Previously, the workflow was manual and tedious:
+
+1. Finish a run
+2. Take screenshots from the Garmin app
+3. Upload them to an AI chat
+4. Hope OCR didn’t hallucinate the data
+
+👉 **This bot fully automates the process.**
+
+It extracts **raw data (JSON)** directly from Garmin’s servers and generates a **pure Markdown technical report**, specifically structured to be copy-pasted into your LLM of choice:
+
+* ChatGPT
+* Claude
+* Gemini
+
+This allows your *AI Coach* to access deep metrics (**HRV, Efficiency Factor, real Splits**) **without hallucinations or OCR errors**.
+
+---
+
+## 🚀 Features
+
+### 📊 1. Running Report (*“Coach Ready” Format*)
+
+Send the activity index (`0` = latest, `1` = previous, etc.) and receive a deep analysis:
+
+**Summary**
+
+* Distance
+* Time
+* Pace
+* GAP (Grade Adjusted Pace)
+* Elevation gain
+
+**Cardio**
+
+* Average / Max Heart Rate
+* Training Effect (Aerobic / Anaerobic)
+* Training Load
+
+**Zones**
+
+* Percentage distribution by HR zones
+* Dynamically detected zone ranges
+
+**Efficiency**
+
+* Efficiency Factor (EF)
+* Power
+* Calories
+
+**Running Dynamics**
+
+* Cadence
+* Stride length
+* GCT (Ground Contact Time)
+* Vertical oscillation
+
+**Splits (Laps)**
+
+* Detailed lap-by-lap table
+* Pace, HR, and EF per kilometer
+
+---
+
+### 🌅 2. Morning Health Report
+
+Command: `morning`
+
+Includes:
+
+* 💤 Sleep: score, quality, and duration
+* 🔋 Body Battery: max charge upon waking and current level
+* ❤️ Heart: RHR and HRV
+* ⚡ Readiness: training readiness score (0–100) with automatic advice
+
+---
+
+### 📋 3. Activity History
+
+Command: `list` or `menu`
+
+Displays the **last 5 activities** with:
+
+* Date
+* Type
+* Distance
+
+So you can easily choose which one to analyze.
+
+---
+
+### 🎤 4. Siri / iOS Shortcuts Support
+
+Endpoint compatible with **GET requests**, perfect for iOS Shortcuts:
+
+> *“Hey Siri, today’s report”*
+
+---
+
+## 🛠️ Architecture
+
+**Event-driven, serverless architecture**:
+
+```mermaid
+graph LR
+    User((User)) -- "Telegram / Siri" --> Webhook
+    Webhook -- "POST Request" --> CloudRun[Google Cloud Run]
+
+    subgraph "Google Cloud"
+        CloudRun -- "Docker Container" --> PythonApp
+    end
+
+    PythonApp -- "Login & Scrape" --> GarminAPI[Garmin Connect]
+    GarminAPI -- "JSON Data" --> PythonApp
+    PythonApp -- "Markdown Report" --> TelegramAPI
+    TelegramAPI -- "Notification" --> User
+    User -- "Copy & Paste" --> LLM_Coach[AI Coach]
+```
+
+---
+
+## ⚙️ Prerequisites
+
+### 🏃 Garmin
+
+* Garmin Connect account
+* Email and password
+
+### 🤖 Telegram
+
+1. Talk to `@BotFather`
+2. Create a new bot
+3. Obtain the **TOKEN**
+
+### ☁️ Google Cloud Platform
+
+* Active account
+* Enabled APIs:
+
+  * Cloud Run API
+  * Cloud Build API
+
+---
+
+## 🚀 Installation & Deployment (Step by Step)
+
+### 1️⃣ Repository Setup
+
+Ensure the following files exist in your repo:
+
+* `main.py` → bot logic
+* `requirements.txt` → dependencies
+
+  * `garminconnect`
+  * `requests`
+  * `functions-framework`
+  * `garth`
+* `Dockerfile` → Python 3.10 Slim with UTF-8 support
+
+---
+
+### 2️⃣ Deploy to Google Cloud Run
+
+1. Go to **Google Cloud Console**
+2. Click **Create Service**
+3. Select **Continuously deploy from a repository**
+4. Connect your GitHub repo
+
+**Build**
+
+* Build type: `Dockerfile`
+* Source location: `/Dockerfile`
+
+**Authentication**
+
+* Allow unauthenticated invocations
+
+**Environment Variables (CRITICAL)**
+Under *Container → Networking → Security → Variables*:
+
+```env
+GARMIN_EMAIL=your_email
+GARMIN_PASSWORD=your_password
+TELEGRAM_TOKEN=your_token
+```
+
+5. Click **Create**
+
+---
+
+### 3️⃣ Configure the Telegram Webhook
+
+After deployment, Google will provide a URL like:
+
+```
+https://garmin-bot-xyz.a.run.app
+```
+
+Open this in your browser:
+
+```
+https://api.telegram.org/bot<TOKEN>/setWebhook?url=<YOUR_GOOGLE_CLOUD_URL>
+```
+
+If you see:
+
+```json
+{"ok": true}
+```
+
+🎉 You’re good to go!
+
+---
+
+## 📱 Usage Guide
+
+| Command   | Action                                  |
+| --------- | --------------------------------------- |
+| `morning` | Morning health report (Sleep, HRV, RHR) |
+| `list`    | Show last 5 activities                  |
+| `0`       | Analyze latest activity                 |
+| `1`       | Analyze previous activity               |
+| `n`       | Analyze activity *n*                    |
+
+---
+
+## 🤖 Siri Integration (Optional)
+
+Create an iOS Shortcut:
+
+* **URL**
+
+  ```
+  <YOUR_GOOGLE_URL>?siri=true&command=morning
+  ```
+* **Method**: `GET`
+* **Action**:
+
+  * Get contents of URL
+  * Speak text
+
+---
+
+## ⚠️ Technical Notes
+
+* **Filesystem**
+  Google Cloud Run uses a *read-only* filesystem.
+  The script applies:
+
+  ```python
+  os.environ["HOME"] = "/tmp"
+  ```
+
+  to allow session tokens to be stored temporarily.
+
+* **Encoding**
+  The Dockerfile enforces:
+
+  ```
+  LANG=C.UTF-8
+  ```
+
+  to correctly handle **accents and emojis** in logs and messages.
+
+---
+
+## 📄 License
+
+This project is for **personal and educational use**.
+Free to modify, extend, and improve.
