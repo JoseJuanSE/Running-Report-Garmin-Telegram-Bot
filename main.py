@@ -100,40 +100,44 @@ def get_morning_report():
             if bb_data:
                 values = bb_data[0].get('bodyBatteryValuesArray', [])
                 if values:
-                     vals = [x[1] for x in values if x[1] is not None]
-                     if vals: 
-                         bb_charged = max(vals)
-                         bb_now = vals[-1]
+                    vals = [x[1] for x in values if x[1] is not None]
+                    if vals: 
+                        bb_charged = max(vals)
+                        bb_now = vals[-1]
         except: pass
 
         # 3. RHR (CORAZÓN EN REPOSO)
         rhr = "-"
+        # Variable para guardar el user_summary si lo pedimos aquí, para reusarlo en Readiness
+        user_sum_data = None 
         try:
-            user_sum = garmin.get_user_summary(today)
-            if 'restingHeartRate' in user_sum: rhr = user_sum['restingHeartRate']
+            user_sum_data = garmin.get_user_summary(today)
+            if 'restingHeartRate' in user_sum_data: rhr = user_sum_data['restingHeartRate']
         except: pass
 
         # 4. READINESS (BÚSQUEDA PROFUNDA)
         readiness = "-"
-        # Intento A: Endpoint directo (Estructura variable)
+        # Intento A: Endpoint directo
         try:
             r_data = garmin.get_training_readiness(today)
             if r_data:
-                # A veces viene directo {'score': 90}
                 if 'score' in r_data: readiness = r_data['score']
-                # A veces anidado {'trainingReadinessDynamicDTO': {'score': 90}}
                 elif 'trainingReadinessDynamicDTO' in r_data:
                     readiness = r_data['trainingReadinessDynamicDTO'].get('score', '-')
         except: pass
 
-        # Intento B: User Summary (Backup si el endpoint falla)
+        # Intento B: User Summary (Backup)
         if readiness == "-":
             try:
-                if 'user_sum' not in locals(): user_sum = garmin.get_user_summary(today)
-                if 'trainingReadinessDynamicDTO' in user_sum:
-                     readiness = user_sum['trainingReadinessDynamicDTO'].get('score', '-')
-                elif 'trainingReadiness' in user_sum:
-                     readiness = user_sum['trainingReadiness']
+                # Si no logramos bajar user_sum antes, lo intentamos ahora
+                if not user_sum_data:
+                    user_sum_data = garmin.get_user_summary(today)
+                
+                if user_sum_data:
+                    if 'trainingReadinessDynamicDTO' in user_sum_data:
+                        readiness = user_sum_data['trainingReadinessDynamicDTO'].get('score', '-')
+                    elif 'trainingReadiness' in user_sum_data:
+                        readiness = user_sum_data['trainingReadiness']
             except: pass
 
         # 5. HRV
@@ -248,7 +252,7 @@ def process_report(data, zones_raw, splits_raw):
         dur = split.get("duration", 0)
         if dist < 10 and dur < 10: continue
         if "splitSummaries" in str(source_list) and len(source_list) > 1:
-             if abs(dur - total_duration) < 2.0: continue
+            if abs(dur - total_duration) < 2.0: continue
         clean_laps.append({
             "nr": len(clean_laps) + 1,
             "dist": dist,
@@ -298,11 +302,12 @@ GCT: {m['gct']} ms | Osc.V: {m['osc_v']} cm ({m['ratio_v']}%)
 
 RPE: {m['rpe']}/10 | Sensación: {m['feeling']}
     """
+
 # --- ENTRY POINT (WEBHOOK & SIRI) ---
 def telegram_webhook(request):
     """
-    Maneja tanto los Webhooks de Telegram como las peticiones directas de Siri/Atajos.
-    Para Siri usar: URL?siri=true&command=mañana (o 0, o lista)
+    Maneja Webhooks de Telegram y peticiones directas de Siri/Atajos.
+    URL Siri: ?siri=true&command=mañana (o 0, o lista)
     """
     
     # 1. DETECCIÓN DE MODO SIRI (HTTP GET/POST directo)
@@ -311,9 +316,8 @@ def telegram_webhook(request):
     
     if siri_mode and command_arg:
         text = command_arg.strip().lower()
-        logging.info(f"🎤 Petición Siri recibida: {text}")
+        logging.info(f"🎤 Petición Siri: {text}")
         
-        # Lógica Siri: Retornar el texto directamente, NO enviar a Telegram
         try:
             # Caso A: Reporte Matutino
             if text in ['mañana', 'morning', 'reporte', 'dia']:
@@ -327,7 +331,6 @@ def telegram_webhook(request):
             else:
                 try:
                     idx = int(text)
-                    # Login rápido para Siri
                     garmin = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
                     garmin.login()
                     activities = garmin.get_activities(idx, 1)
@@ -336,7 +339,6 @@ def telegram_webhook(request):
                     act_id = activities[0]['activityId']
                     details = garmin.get_activity(act_id)
                     
-                    # Intentamos zonas y splits (silencioso si falla)
                     try: zones = garmin.connectapi(f"/activity-service/activity/{act_id}/hrTimeInZones")
                     except: zones = []
                     try: splits = garmin.connectapi(f"/activity-service/activity/{act_id}/splits")
@@ -344,26 +346,25 @@ def telegram_webhook(request):
 
                     if details:
                         metrics = process_report(details, zones, splits)
-                        # Para Siri, el Markdown a veces se lee raro, pero el texto plano funciona bien
                         return generate_markdown(metrics), 200
                     return "Error: Actividad vacía.", 200
 
                 except ValueError:
-                    return "Comando no reconocido por Siri. Usa: mañana, lista o un número.", 200
+                    return "Comando no reconocido. Usa: mañana, lista o un número.", 200
                 except Exception as e:
-                    return f"Error procesando actividad: {str(e)}", 200
+                    return f"Error Siri: {str(e)}", 200
 
         except Exception as e:
-            return f"Error en Siri: {str(e)}", 500
+            return f"Error Fatal Siri: {str(e)}", 500
 
-    # 2. MODO TELEGRAM (Webhook JSON estándar)
+    # 2. MODO TELEGRAM (Webhook JSON)
     req = request.get_json(silent=True)
     if not req or 'message' not in req: return 'OK', 200
 
     chat_id = req['message']['chat']['id']
     text = req['message'].get('text', '').strip().lower()
 
-    # --- LÓGICA EXISTENTE DE TELEGRAM ---
+    # Comandos Texto
     if text in ['mañana', 'buenos dias', 'morning', 'reporte', 'dia']:
         send_telegram(chat_id, "⏳ Obteniendo signos vitales...", use_markdown=False)
         send_telegram(chat_id, get_morning_report())
@@ -373,14 +374,10 @@ def telegram_webhook(request):
         send_telegram(chat_id, "⏳ Consultando historial...", use_markdown=False)
         send_telegram(chat_id, get_activity_menu())
         return 'OK', 200
-        
-    if text == 'debug':
-         # (Tu código de debug aquí si quieres mantenerlo)
-         return 'OK', 200
 
+    # Comandos Numéricos (Actividad)
     try:
         activity_index = int(text)
-        # Proceso de reporte actividad para Telegram
         send_telegram(chat_id, "⏳ 1/3 Conectando...", use_markdown=False)
         try:
             garmin = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
