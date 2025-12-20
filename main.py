@@ -76,7 +76,7 @@ def send_telegram(chat_id, text, use_markdown=True):
                 send_telegram(chat_id, text, use_markdown=False)
     except Exception as e: logging.error(f"Error Telegram: {e}")
 
-# --- REPORTE MATUTINO MEJORADO ---
+# --- REPORTE MATUTINO ---
 def get_morning_report():
     try:
         garmin = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
@@ -106,18 +106,16 @@ def get_morning_report():
                         bb_now = vals[-1]
         except: pass
 
-        # 3. RHR (CORAZÓN EN REPOSO)
+        # 3. RHR
         rhr = "-"
-        # Variable para guardar el user_summary si lo pedimos aquí, para reusarlo en Readiness
-        user_sum_data = None 
+        user_sum_data = None
         try:
             user_sum_data = garmin.get_user_summary(today)
             if 'restingHeartRate' in user_sum_data: rhr = user_sum_data['restingHeartRate']
         except: pass
 
-        # 4. READINESS (BÚSQUEDA PROFUNDA)
+        # 4. READINESS
         readiness = "-"
-        # Intento A: Endpoint directo
         try:
             r_data = garmin.get_training_readiness(today)
             if r_data:
@@ -126,13 +124,9 @@ def get_morning_report():
                     readiness = r_data['trainingReadinessDynamicDTO'].get('score', '-')
         except: pass
 
-        # Intento B: User Summary (Backup)
         if readiness == "-":
             try:
-                # Si no logramos bajar user_sum antes, lo intentamos ahora
-                if not user_sum_data:
-                    user_sum_data = garmin.get_user_summary(today)
-                
+                if not user_sum_data: user_sum_data = garmin.get_user_summary(today)
                 if user_sum_data:
                     if 'trainingReadinessDynamicDTO' in user_sum_data:
                         readiness = user_sum_data['trainingReadinessDynamicDTO'].get('score', '-')
@@ -155,17 +149,7 @@ def get_morning_report():
         msg += f"   ⏱️ Duración: {format_duration_hm(sleep_secs)}\n\n"
         msg += f"🔋 **Body Battery:** Carga máx: {bb_charged} | Actual: {bb_now}\n"
         msg += f"💓 **Corazón:**\n   ❤️ RHR: {rhr} ppm\n   📉 VFC: {hrv_status} ({hrv_avg} ms)\n\n"
-        msg += f"🚦 **Disposición (Readiness):** {readiness}/100\n"
-        
-        try:
-            r_val = int(readiness)
-            if r_val >= 85: msg += "   🚀 ¡A VOLAR! Estás a tope."
-            elif r_val >= 65: msg += "   ✅ Luz verde para entrenar."
-            elif r_val >= 45: msg += "   ⚠️ Baja la carga hoy."
-            else: msg += "   🛑 Descansa, soldado."
-        except: 
-            msg += "   (Sincroniza tu reloj para ver el dato)"
-
+        msg += f"🚦 **Disposición:** {readiness}/100\n"
         return msg
     except Exception as e: return f"❌ Error: {str(e)}"
 
@@ -271,63 +255,67 @@ def process_report(data, zones_raw, splits_raw):
     return metrics
 
 def generate_markdown(m):
-    laps_table = "| # | km | Rit | GAP | FC | Cad | GCT | EF |\n|---|---|---|---|---|---|---|---|\n"
+    # TABLA COMPLETA CON TODAS LAS MÉTRICAS
+    # Usamos ``` para que Telegram respete los espacios
+    laps_table = "```\n"
+    laps_table += "| #  | km   | Ritmo | GAP   | FC  | Cad | GCT | EF  |\n"
+    laps_table += "|----|------|-------|-------|-----|-----|-----|-----|\n"
+    
     for l in m['laps']:
-        laps_table += f"| {l['nr']} | {(l['dist']/1000):.2f} | {l['ritmo']} | {l['gap']} | {l['fc']} | {l['cad']} | {l['gct']} | {l['ef']} |\n"
+        # Formateo riguroso para alineación
+        nr = str(l['nr']).rjust(2)
+        dist = f"{(l['dist']/1000):.2f}".rjust(4)
+        ritmo = str(l['ritmo']).center(5)
+        gap = str(l['gap']).center(5)
+        fc = str(l['fc']).rjust(3)
+        cad = str(l['cad']).rjust(3)
+        gct = str(l['gct']).rjust(3)
+        ef = str(l['ef']).rjust(4)
+        
+        laps_table += f"| {nr} | {dist} | {ritmo} | {gap} | {fc} | {cad} | {gct} | {ef} |\n"
+    
+    laps_table += "```" # Fin de la tabla monoespaciada
+    
     return f"""
-# 🏃 Reporte: {m['tipo']}
+# 🏃 *{m['tipo'].upper()}*
 📅 {m['fecha']}
 📍 {m['lugar_completo']}
 
-⏱️ *PRINCIPALES*
-Dist: {m['distancia']} m | Tiempo: {format_time(m['duracion'])}
-Ritmo: {format_pace(m['ritmo_ms'])}/km | GAP: {format_pace(m['gap_ms'])}/km
-Vel: {m['vel_kmh']} km/h | Asc: {m['ascenso']} m
+⏱️ *RESUMEN*
+Dist: `{m['distancia']} m` | Tiempo: `{format_time(m['duracion'])}`
+Ritmo: `{format_pace(m['ritmo_ms'])}/km` | GAP: `{format_pace(m['gap_ms'])}/km`
+Vel: `{m['vel_kmh']} km/h` | Asc: `{m['ascenso']} m`
 
 ❤️ *CARDIO & CARGA*
-FC Avg/Max: {m['fc_avg']} / {m['fc_max']} ppm
-TE: {m['te_aer']} / {m['te_ana']} | Carga: {m['carga']}
-*Zonas:*
+FC Avg: `{m['fc_avg']} ppm` | Max: `{m['fc_max']} ppm`
+Carga: `{m['carga']}` | TE: `{m['te_aer']}` / `{m['te_ana']}`
+
+📊 *ZONAS*
 {m['zonas_txt']}
 
-⚡ *EFICIENCIA*
-EF: {m['ef']} | Potencia: {m['potencia']} W | Cal: {m['calorias']}
+⚡ *EFICIENCIA & DINÁMICAS*
+EF: `{m['ef']}` | Potencia: `{m['potencia']} W` | Cal: `{m['calorias']}`
+Cad: `{m['cadencia']}` | Zancada: `{m['zancada']} cm`
+GCT: `{m['gct']} ms` | Osc.V: `{m['osc_v']} cm` (`{m['ratio_v']}%`)
 
-👟 *DINÁMICAS*
-Cad: {m['cadencia']} | Zancada: {m['zancada']} cm
-GCT: {m['gct']} ms | Osc.V: {m['osc_v']} cm ({m['ratio_v']}%)
-
-📊 *SPLITS*
+📝 *SPLITS*
 {laps_table}
 
 RPE: {m['rpe']}/10 | Sensación: {m['feeling']}
     """
 
-# --- ENTRY POINT (WEBHOOK & SIRI) ---
+# --- ENTRY POINT ---
 def telegram_webhook(request):
-    """
-    Maneja Webhooks de Telegram y peticiones directas de Siri/Atajos.
-    URL Siri: ?siri=true&command=mañana (o 0, o lista)
-    """
-    
-    # 1. DETECCIÓN DE MODO SIRI (HTTP GET/POST directo)
     siri_mode = request.args.get('siri') or request.args.get('source') == 'siri'
     command_arg = request.args.get('command')
     
     if siri_mode and command_arg:
         text = command_arg.strip().lower()
-        logging.info(f"🎤 Petición Siri: {text}")
-        
         try:
-            # Caso A: Reporte Matutino
             if text in ['mañana', 'morning', 'reporte', 'dia']:
                 return get_morning_report(), 200
-            
-            # Caso B: Menú
             elif text in ['menu', 'lista', 'historial']:
                 return get_activity_menu(), 200
-            
-            # Caso C: Actividad por índice (0, 1...)
             else:
                 try:
                     idx = int(text)
@@ -335,36 +323,25 @@ def telegram_webhook(request):
                     garmin.login()
                     activities = garmin.get_activities(idx, 1)
                     if not activities: return "No encontré esa actividad.", 200
-                    
                     act_id = activities[0]['activityId']
                     details = garmin.get_activity(act_id)
-                    
                     try: zones = garmin.connectapi(f"/activity-service/activity/{act_id}/hrTimeInZones")
                     except: zones = []
                     try: splits = garmin.connectapi(f"/activity-service/activity/{act_id}/splits")
                     except: splits = {}
-
                     if details:
                         metrics = process_report(details, zones, splits)
                         return generate_markdown(metrics), 200
                     return "Error: Actividad vacía.", 200
+                except: return "Comando Siri no reconocido.", 200
+        except Exception as e: return f"Error Siri: {str(e)}", 500
 
-                except ValueError:
-                    return "Comando no reconocido. Usa: mañana, lista o un número.", 200
-                except Exception as e:
-                    return f"Error Siri: {str(e)}", 200
-
-        except Exception as e:
-            return f"Error Fatal Siri: {str(e)}", 500
-
-    # 2. MODO TELEGRAM (Webhook JSON)
     req = request.get_json(silent=True)
     if not req or 'message' not in req: return 'OK', 200
 
     chat_id = req['message']['chat']['id']
     text = req['message'].get('text', '').strip().lower()
 
-    # Comandos Texto
     if text in ['mañana', 'buenos dias', 'morning', 'reporte', 'dia']:
         send_telegram(chat_id, "⏳ Obteniendo signos vitales...", use_markdown=False)
         send_telegram(chat_id, get_morning_report())
@@ -375,7 +352,6 @@ def telegram_webhook(request):
         send_telegram(chat_id, get_activity_menu())
         return 'OK', 200
 
-    # Comandos Numéricos (Actividad)
     try:
         activity_index = int(text)
         send_telegram(chat_id, "⏳ 1/3 Conectando...", use_markdown=False)
@@ -383,28 +359,23 @@ def telegram_webhook(request):
             garmin = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
             garmin.login()
             send_telegram(chat_id, "✅ 2/3 Descargando...", use_markdown=False)
-
             activities = garmin.get_activities(activity_index, 1)
             if not activities:
                 send_telegram(chat_id, "❌ No encontré esa actividad.", use_markdown=False)
                 return 'OK', 200
-            
             act_id = activities[0]['activityId']
             details = garmin.get_activity(act_id)
             try: zones = garmin.connectapi(f"/activity-service/activity/{act_id}/hrTimeInZones")
             except: zones = []
             try: splits = garmin.connectapi(f"/activity-service/activity/{act_id}/splits")
             except: splits = {}
-
             if details:
                 metrics = process_report(details, zones, splits)
                 report = generate_markdown(metrics)
                 send_telegram(chat_id, report)
-            else:
-                send_telegram(chat_id, "❌ Error: Actividad vacía.", use_markdown=False)
+            else: send_telegram(chat_id, "❌ Error: Actividad vacía.", use_markdown=False)
         except Exception as e:
             send_telegram(chat_id, f"🔥 Error: {str(e)}", use_markdown=False)
-            
     except ValueError:
         help_msg = "🤖 Comandos: mañana, lista, 0 (última carrera)."
         send_telegram(chat_id, help_msg)
