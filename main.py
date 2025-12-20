@@ -305,6 +305,43 @@ def telegram_webhook(request):
     if not req or 'message' not in req: return 'OK', 200
     chat_id = req['message']['chat']['id']
     text = req['message'].get('text', '').strip().lower()
+    
+    # --- MODO DETECTIVE (DEBUG) ---
+    if text == 'debug':
+        send_telegram(chat_id, "🕵️‍♂️ Iniciando diagnóstico...", use_markdown=False)
+        try:
+            garmin = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
+            garmin.login()
+            today = date.today().isoformat()
+            
+            # 1. Investigar Training Readiness (Endpoint Específico)
+            try:
+                raw_readiness = garmin.get_training_readiness(today)
+                logging.info(f"DEBUG READINESS RAW: {raw_readiness}") # Esto va a los logs de Google
+                send_telegram(chat_id, f"🔍 Readiness Endpoint:\n{str(raw_readiness)[:1000]}", use_markdown=False)
+            except Exception as e:
+                send_telegram(chat_id, f"❌ Falló Readiness Endpoint: {str(e)}", use_markdown=False)
+
+            # 2. Investigar User Summary (Donde a veces se esconde)
+            try:
+                raw_summary = garmin.get_user_summary(today)
+                logging.info(f"DEBUG SUMMARY RAW: {raw_summary}") # Esto va a los logs
+                
+                # Buscamos pistas clave en el resumen
+                keys_found = [k for k in raw_summary.keys() if 'readiness' in k.lower() or 'score' in k.lower()]
+                send_telegram(chat_id, f"🔍 Claves sospechosas en Summary:\n{keys_found}", use_markdown=False)
+                
+                # Ver valor exacto si existe
+                val = raw_summary.get('trainingReadiness')
+                send_telegram(chat_id, f"🔍 Valor 'trainingReadiness' en Summary: {val}", use_markdown=False)
+                
+            except Exception as e:
+                send_telegram(chat_id, f"❌ Falló Summary Endpoint: {str(e)}", use_markdown=False)
+
+        except Exception as e:
+            send_telegram(chat_id, f"🔥 Error General Debug: {str(e)}", use_markdown=False)
+        
+        return 'OK', 200
 
     if text in ['mañana', 'buenos dias', 'morning', 'reporte', 'dia']:
         send_telegram(chat_id, "⏳ Obteniendo signos vitales...", use_markdown=False)
