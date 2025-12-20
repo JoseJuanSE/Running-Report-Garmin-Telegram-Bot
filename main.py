@@ -234,6 +234,7 @@ def get_morning_report():
             sleep_data = garmin.get_sleep_data(today)
             daily_sleep = sleep_data.get('dailySleepDTO', {})
             sleep_score = daily_sleep.get('sleepScores', {}).get('overall', {}).get('value', '-')
+            # qualifierKey suele venir en inglés (GOOD, FAIR), lo dejamos o traducimos simple
             sleep_qual = daily_sleep.get('sleepScores', {}).get('overall', {}).get('qualifierKey', '').replace('_', ' ').title()
             sleep_secs = daily_sleep.get('sleepTimeSeconds', 0)
         except: pass
@@ -260,8 +261,10 @@ def get_morning_report():
         except: pass
 
         # 4. TRAINING READINESS / DISPOSICIÓN DE ENTRENAMIENTO
+        # Aggressive Search / Búsqueda Agresiva
         readiness = "-"
-        # Attempt A: Direct Endpoint
+        
+        # Strategy A: Specific Endpoint / Estrategia A: Endpoint Específico
         try:
             r_data = garmin.get_training_readiness(today)
             if r_data:
@@ -270,9 +273,10 @@ def get_morning_report():
                     readiness = r_data['trainingReadinessDynamicDTO'].get('score', '-')
         except: pass
 
-        # Attempt B: User Summary Backup
+        # Strategy B: User Summary (Backup) / Estrategia B: Resumen de Usuario
         if readiness == "-":
             try:
+                # If we failed to get user_sum before, try now / Si fallamos antes, intentar ahora
                 if not user_sum_data: user_sum_data = garmin.get_user_summary(today)
                 if user_sum_data:
                     if 'trainingReadinessDynamicDTO' in user_sum_data:
@@ -280,7 +284,7 @@ def get_morning_report():
                     elif 'trainingReadiness' in user_sum_data:
                         readiness = user_sum_data['trainingReadiness']
             except: pass
-
+            
         # 5. HRV / VFC
         hrv_status, hrv_avg = "-", "-"
         try:
@@ -301,11 +305,12 @@ def get_morning_report():
         
         # Advice Logic / Lógica de Consejo
         try:
-            r_val = int(readiness)
-            if r_val >= 85: msg += f"   {T['advice_go']}"
-            elif r_val >= 65: msg += f"   {T['advice_ok']}"
-            elif r_val >= 45: msg += f"   {T['advice_warn']}"
-            else: msg += f"   {T['advice_stop']}"
+            if readiness != "-":
+                r_val = int(readiness)
+                if r_val >= 85: msg += f"   {T['advice_go']}"
+                elif r_val >= 65: msg += f"   {T['advice_ok']}"
+                elif r_val >= 45: msg += f"   {T['advice_warn']}"
+                else: msg += f"   {T['advice_stop']}"
         except: pass
 
         return msg
@@ -434,8 +439,7 @@ def process_report(data, zones_raw, splits_raw):
     return metrics
 
 def generate_markdown(m):
-    # Table formatting with dynamic headers
-    # Formateo de tabla con cabeceras dinámicas
+    # Cabeceras de tabla traducidas (compactas)
     laps_table = "```\n"
     laps_table += f"| #  | km   | {T['lbl_pace']} | {T['lbl_gap']}   | FC  | {T['lbl_cad']} | {T['lbl_gct']} | EF  |\n"
     laps_table += "|----|------|-------|-------|-----|-----|-----|-----|\n"
@@ -499,6 +503,7 @@ def telegram_webhook(request):
     if siri_mode and command_arg:
         text = command_arg.strip().lower()
         try:
+            # Comandos bilingües
             if text in ['mañana', 'morning', 'reporte', 'dia', 'report']:
                 return get_morning_report(), 200, headers
             elif text in ['menu', 'lista', 'historial', 'list', 'history']:
@@ -521,7 +526,7 @@ def telegram_webhook(request):
                         metrics = process_report(details, zones, splits)
                         return generate_markdown(metrics), 200, headers
                     return T['err_empty'], 200, headers
-                except: return "Siri command not found.", 200, headers
+                except: return "Command not found", 200, headers
         except Exception as e: return f"Siri Error: {str(e)}", 500, headers
 
     # --- TELEGRAM HANDLER ---
