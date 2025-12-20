@@ -35,7 +35,7 @@ RUN pip install --no-cache-dir -r requirements.txt && echo "Cache roto"
 COPY . .
 
 # Al cambiar esto, obligamos a Docker a rehacer la copia del código
-ENV VERSION=v10
+ENV VERSION=v11_fix
 
 # Comando maestro: Le dice a Google qué ejecutar al inicio
 # IMPORTANTE: --target=telegram_webhook debe coincidir con tu función en main.py
