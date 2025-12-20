@@ -2,10 +2,15 @@ import os
 import json
 import logging
 import requests
+import traceback
 from garminconnect import Garmin
 
+# --- HACK PARA CLOUD RUN (IMPORTANTE) ---
+# Engañamos a la librería para que crea que /tmp es el directorio del usuario.
+# Esto permite que guarde los tokens de sesión sin error de "Read-only file system".
+os.environ['HOME'] = '/tmp'
+
 # --- CONFIGURACIÓN ---
-# Estas variables las configurarás en el panel de Google Cloud, NO AQUÍ.
 GARMIN_EMAIL = os.environ.get('GARMIN_EMAIL')
 GARMIN_PASSWORD = os.environ.get('GARMIN_PASSWORD')
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
@@ -17,7 +22,7 @@ EF_FIELD_NUM_LAP = 1
 
 FEELING_MAP = {0: "Muy Débil", 25: "Débil", 50: "Normal", 75: "Fuerte", 100: "Muy Fuerte"}
 
-# --- FUNCIONES DE AYUDA (HELPER) ---
+# --- HELPER FUNCTIONS ---
 def format_time(seconds):
     if not seconds: return "00:00"
     m, s = divmod(int(seconds), 60)
@@ -53,33 +58,20 @@ def get_ciq_by_id(data, target_app_id, target_field_num):
         except: continue
     return None
 
-# --- LÓGICA DE GARMIN (Tu script V7.0 adaptado) ---
-def get_activity_data(index=0):
+def send_telegram(chat_id, text):
+    """Envia mensaje a Telegram"""
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {
+        'chat_id': chat_id,
+        'text': text,
+        'parse_mode': 'Markdown' 
+    }
     try:
-        # Importante: En Cloud Functions solo /tmp es escribible
-        # garminconnect intenta guardar tokens, así que le damos una ruta válida o login directo
-        # Corrección: Usar /tmp para guardar tokens en Cloud Run
-        garmin = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD, token_store='/tmp')
-        garmin.login()
-
-        # Obtener actividad por índice
-        activities = garmin.get_activities(index, 1)
-        if not activities: return None, None, None
-        
-        last = activities[0]
-        act_id = last['activityId']
-        
-        details = garmin.get_activity(act_id)
-        try: zones = garmin.connectapi(f"/activity-service/activity/{act_id}/hrTimeInZones")
-        except: zones = []
-        try: splits = garmin.connectapi(f"/activity-service/activity/{act_id}/splits")
-        except: splits = {}
-            
-        return details, zones, splits
+        requests.post(url, json=payload)
     except Exception as e:
-        logging.error(f"Garmin Error: {e}")
-        raise e
+        print(f"Error enviando a Telegram: {e}")
 
+# --- LÓGICA CORE ---
 def process_report(data, zones_raw, splits_raw):
     s = data.get('summaryDTO', {})
     total_duration = s.get("duration", 0)
@@ -184,8 +176,6 @@ def process_report(data, zones_raw, splits_raw):
 
 def generate_markdown(m):
     laps_table = ""
-    # Nota: Telegram no renderiza Markdown de tablas perfectamente en movil, pero se hace el intento
-    # Usamos formato compacto para movil
     for l in m['laps']:
         laps_table += f"| {l['nr']} | {(l['dist']/1000):.2f} | {l['ritmo']} | {l['gap']} | {l['ritmo_max']} | {l['ascenso']} | {l['fc']} | {l['fc_max']} | {l['cad']} | {l['gct']} | {l['vr']} | {l['ef']} |\n"
     
@@ -220,51 +210,68 @@ GCT: {m['gct']} ms | Osc.V: {m['osc_v']} cm ({m['ratio_v']}%)
 RPE: {m['rpe']}/10 | Sensación: {m['feeling']}
     """
 
-# --- ENTRY POINT (GOOGLE CLOUD FUNCTION) ---
+# --- ENTRY POINT ---
 def telegram_webhook(request):
     """
     Función que recibe el POST de Telegram
     """
-    # 1. Parsear el mensaje de Telegram
     req = request.get_json()
     if not req or 'message' not in req:
-        return 'OK', 200 # Ignorar actualizaciones de estado u otros eventos
+        return 'OK', 200
 
     chat_id = req['message']['chat']['id']
     text = req['message'].get('text', '').strip()
 
-    # 2. Validar Input (¿Es un número?)
     try:
         activity_index = int(text)
     except ValueError:
-        # Si no es un número, ignoramos o mandamos ayuda (opcional)
         return 'OK', 200 
 
-    # 3. Enviar mensaje de "Procesando..."
-    send_telegram(chat_id, "⏳ Procesando datos de Garmin... dame unos segundos.")
+    # 1. AVISO DE INICIO
+    send_telegram(chat_id, "⏳ 1/3 Iniciando conexión con Garmin...")
 
-    # 4. Ejecutar lógica
     try:
-        details, zones, splits = get_activity_data(activity_index)
+        # --- LOGIN (CORREGIDO) ---
+        # Volvemos a la llamada estándar, porque ya configuramos HOME=/tmp arriba
+        garmin = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
+        garmin.login()
+        send_telegram(chat_id, "✅ 2/3 Login exitoso. Descargando datos...")
+
+        # --- DESCARGA ---
+        activities = garmin.get_activities(activity_index, 1)
+        if not activities:
+            send_telegram(chat_id, "❌ No se encontraron actividades recientes.")
+            return 'OK', 200
+        
+        last = activities[0]
+        act_id = last['activityId']
+        
+        details = garmin.get_activity(act_id)
+        
+        try: zones = garmin.connectapi(f"/activity-service/activity/{act_id}/hrTimeInZones")
+        except: zones = []
+        try: splits = garmin.connectapi(f"/activity-service/activity/{act_id}/splits")
+        except: splits = {}
+
+        # --- PROCESAMIENTO ---
         if details:
             metrics = process_report(details, zones, splits)
             report = generate_markdown(metrics)
             send_telegram(chat_id, report)
         else:
-            send_telegram(chat_id, "❌ No encontré actividades en ese índice.")
+            send_telegram(chat_id, "❌ Error: La actividad no tiene detalles.")
             
     except Exception as e:
-        error_msg = f"❌ Error interno: {str(e)}"
-        logging.error(error_msg)
+        # CAPTURA DE ERROR EXPLÍCITA PARA TELEGRAM
+        error_trace = traceback.format_exc()
+        short_error = str(e)
+        
+        error_msg = f"🔥 **ERROR CRÍTICO** 🔥\n\n`{short_error}`"
+        
+        if "authentication" in short_error.lower() or "401" in short_error:
+            error_msg += "\n\n⚠️ **Posible causa:** Contraseña incorrecta o Garmin pide código 2FA."
+        
         send_telegram(chat_id, error_msg)
+        logging.error(error_trace)
 
     return 'OK', 200
-
-def send_telegram(chat_id, text):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {
-        'chat_id': chat_id,
-        'text': text,
-        'parse_mode': 'Markdown' 
-    }
-    requests.post(url, json=payload)
