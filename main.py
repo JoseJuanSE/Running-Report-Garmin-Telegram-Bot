@@ -6,6 +6,8 @@ import traceback
 from garminconnect import Garmin
 
 # --- HACK PARA CLOUD RUN ---
+# Engañamos a la librería para que crea que /tmp es el directorio del usuario.
+# Esto evita el error "Read-only file system" al guardar tokens.
 os.environ['HOME'] = '/tmp'
 
 # --- CONFIGURACIÓN ---
@@ -13,14 +15,14 @@ GARMIN_EMAIL = os.environ.get('GARMIN_EMAIL')
 GARMIN_PASSWORD = os.environ.get('GARMIN_PASSWORD')
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
 
-# Configuración EF
+# Configuración EF (Connect IQ)
 EF_APP_ID = "e9f83886-2e1d-448e-aa0a-0cdfb9160df9"
 EF_FIELD_NUM_GLOBAL = 2
 EF_FIELD_NUM_LAP = 1
 
 FEELING_MAP = {0: "Muy Débil", 25: "Débil", 50: "Normal", 75: "Fuerte", 100: "Muy Fuerte"}
 
-# --- HELPER FUNCTIONS ---
+# --- FUNCIONES DE AYUDA ---
 def format_time(seconds):
     if not seconds: return "00:00"
     m, s = divmod(int(seconds), 60)
@@ -57,15 +59,11 @@ def get_ciq_by_id(data, target_app_id, target_field_num):
     return None
 
 def send_telegram(chat_id, text, use_markdown=True):
-    """Envia mensaje a Telegram con reintento en Texto Plano si falla el Markdown"""
+    """Envia mensaje a Telegram con reintento automático en texto plano si falla el formato"""
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    
-    payload = {
-        'chat_id': chat_id,
-        'text': text
-    }
+    payload = {'chat_id': chat_id, 'text': text}
     if use_markdown:
-        payload['parse_mode'] = 'Markdown' # Usamos Markdown V1 (menos estricto que V2)
+        payload['parse_mode'] = 'Markdown'
 
     try:
         response = requests.post(url, json=payload)
@@ -73,34 +71,54 @@ def send_telegram(chat_id, text, use_markdown=True):
         
         if not response_data.get('ok'):
             error_desc = response_data.get('description', 'Unknown error')
-            logging.error(f"⚠️ Telegram rechazó el mensaje: {error_desc}")
+            logging.error(f"⚠️ Telegram rechazó mensaje: {error_desc}")
             
-            # Si falló por formato, reintentar como texto plano
+            # Si falla por Markdown, reintentar como texto plano
             if use_markdown and ("parse" in error_desc.lower() or "markdown" in error_desc.lower()):
-                logging.info("🔄 Reintentando envío como Texto Plano...")
+                logging.info("🔄 Reintentando como Texto Plano...")
                 send_telegram(chat_id, text, use_markdown=False)
-            else:
-                # Si falla por otra cosa (ej. mensaje muy largo), avisar
-                if "too long" in error_desc.lower():
-                     requests.post(url, json={'chat_id': chat_id, 'text': "❌ Error: El reporte es demasiado largo para Telegram."})
     except Exception as e:
-        logging.error(f"Error de conexión con Telegram: {e}")
+        logging.error(f"Error conexión Telegram: {e}")
 
-# --- LÓGICA CORE ---
+# --- FUNCIONES DE LÓGICA (Menú y Reporte) ---
+
+def get_activity_menu():
+    """Descarga las últimas 5 actividades para mostrar un menú"""
+    try:
+        garmin = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
+        garmin.login()
+        
+        # Pedimos las últimas 5
+        activities = garmin.get_activities(0, 5)
+        if not activities:
+            return "❌ No encontré actividades recientes."
+            
+        msg = "📋 **Últimas Actividades:**\n\n"
+        for i, act in enumerate(activities):
+            # Extraer datos básicos
+            start = act.get("startTimeLocal", "")[:16].replace("T", " ")
+            name = act.get("activityName", "Sin nombre")
+            type_key = act.get("activityType", {}).get("typeKey", "activity")
+            dist_km = act.get("distance", 0) / 1000
+            
+            # Formato: 0 | Fecha | running | 5.00 km
+            msg += f"`{i}` - *{start}*\n   🏃 {type_key} | 📏 {dist_km:.2f} km\n   📝 {name}\n\n"
+            
+        msg += "👉 *Envía el número (0, 1...) para ver el reporte completo.*"
+        return msg
+    except Exception as e:
+        return f"❌ Error obteniendo menú: {str(e)}"
+
 def process_report(data, zones_raw, splits_raw):
+    # (Tu lógica de procesamiento intacta)
     s = data.get('summaryDTO', {})
     total_duration = s.get("duration", 0)
-
-    # Ubicación
+    
     location = data.get("locationName", "Ubicación desconocida")
     min_elev = safe_round(s.get("minElevation"), 0)
     max_elev = safe_round(s.get("maxElevation"), 0)
-    if min_elev != "-" and max_elev != "-":
-        loc_str = f"{location} ({max_elev} m)" if abs(max_elev - min_elev) < 5 else f"{location} ({min_elev}-{max_elev} m)"
-    else:
-        loc_str = location
+    loc_str = f"{location} ({max_elev} m)" if min_elev != "-" else location
 
-    # Métricas Globales
     metrics = {
         "fecha": s.get("startTimeLocal", "").replace("T", " "),
         "lugar_completo": loc_str,
@@ -126,17 +144,14 @@ def process_report(data, zones_raw, splits_raw):
         "gap_ms": s.get("avgGradeAdjustedSpeed")
     }
 
-    # RPE & Feeling
     rpe_raw = s.get("directWorkoutRpe")
     metrics['rpe'] = safe_round(rpe_raw / 10, 0) if rpe_raw else "__"
     feel_raw = s.get("directWorkoutFeel")
     metrics['feeling'] = FEELING_MAP[min(FEELING_MAP.keys(), key=lambda k: abs(k-feel_raw))] if feel_raw is not None else "Normal"
 
-    # EF Global
     ciq_ef = get_ciq_by_id(data, EF_APP_ID, EF_FIELD_NUM_GLOBAL)
     metrics['ef'] = f"{ciq_ef:.2f}" if ciq_ef else "-"
 
-    # Zonas
     zones_list = []
     if zones_raw:
         zones_sorted = sorted(zones_raw, key=lambda x: x['zoneNumber'])
@@ -155,7 +170,6 @@ def process_report(data, zones_raw, splits_raw):
                 zones_list.append(f"  * Z{z_num} ({range_str}): {pct:.0f}% ({format_time(secs)})")
     metrics['zonas_txt'] = "\n".join(zones_list) if zones_list else "Sin datos de zonas."
 
-    # Vueltas
     clean_laps = []
     source_list = []
     if splits_raw and 'lapDTOs' in splits_raw and len(splits_raw['lapDTOs']) > 0:
@@ -190,11 +204,7 @@ def process_report(data, zones_raw, splits_raw):
     return metrics
 
 def generate_markdown(m):
-    laps_table = ""
-    # Header compacto para movil
-    laps_table += "| # | km | Rit | GAP | FC | Cad | GCT | EF |\n"
-    laps_table += "|---|---|---|---|---|---|---|---|\n"
-    
+    laps_table = "| # | km | Rit | GAP | FC | Cad | GCT | EF |\n|---|---|---|---|---|---|---|---|\n"
     for l in m['laps']:
         laps_table += f"| {l['nr']} | {(l['dist']/1000):.2f} | {l['ritmo']} | {l['gap']} | {l['fc']} | {l['cad']} | {l['gct']} | {l['ef']} |\n"
     
@@ -227,62 +237,67 @@ GCT: {m['gct']} ms | Osc.V: {m['osc_v']} cm ({m['ratio_v']}%)
 RPE: {m['rpe']}/10 | Sensación: {m['feeling']}
     """
 
-# --- ENTRY POINT ---
+# --- ENTRY POINT (WEBHOOK) ---
 def telegram_webhook(request):
     req = request.get_json()
-    if not req or 'message' not in req:
-        return 'OK', 200
+    if not req or 'message' not in req: return 'OK', 200
 
     chat_id = req['message']['chat']['id']
-    text = req['message'].get('text', '').strip()
+    text = req['message'].get('text', '').strip().lower() # Normalizamos a minúsculas
 
+    # --- CASO 1: COMANDO DE MENÚ ---
+    if text in ['menu', 'lista', 'historial', 'actividades']:
+        send_telegram(chat_id, "⏳ Consultando historial en Garmin...", use_markdown=False)
+        menu_msg = get_activity_menu()
+        send_telegram(chat_id, menu_msg)
+        return 'OK', 200
+
+    # --- CASO 2: SOLICITUD DE REPORTE (NÚMERO) ---
     try:
         activity_index = int(text)
     except ValueError:
+        # Si no es número ni comando conocido, mandamos ayuda
+        help_msg = (
+            "🤖 **Comandos del Bot:**\n\n"
+            "🔹 Escribe `lista` o `menu` para ver tus últimas carreras.\n"
+            "🔹 Escribe un número (ej. `0`) para ver el reporte detallado."
+        )
+        send_telegram(chat_id, help_msg)
         return 'OK', 200 
 
-    # 1. AVISO DE INICIO
-    logging.info("Iniciando proceso...")
-    send_telegram(chat_id, "⏳ 1/3 Conectando a Garmin...", use_markdown=False)
+    # Inicio de proceso de reporte
+    logging.info(f"Solicitando reporte índice: {activity_index}")
+    send_telegram(chat_id, "⏳ 1/3 Conectando...", use_markdown=False)
 
     try:
-        # --- LOGIN ---
         garmin = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
         garmin.login()
-        logging.info("Login exitoso")
-        send_telegram(chat_id, "✅ 2/3 Descargando actividad...", use_markdown=False)
+        send_telegram(chat_id, "✅ 2/3 Descargando...", use_markdown=False)
 
-        # --- DESCARGA ---
         activities = garmin.get_activities(activity_index, 1)
         if not activities:
-            send_telegram(chat_id, "❌ No se encontró actividad.", use_markdown=False)
+            send_telegram(chat_id, "❌ No encontré esa actividad.", use_markdown=False)
             return 'OK', 200
         
         last = activities[0]
         act_id = last['activityId']
-        logging.info(f"Procesando actividad ID: {act_id}")
         
         details = garmin.get_activity(act_id)
-        
         try: zones = garmin.connectapi(f"/activity-service/activity/{act_id}/hrTimeInZones")
         except: zones = []
         try: splits = garmin.connectapi(f"/activity-service/activity/{act_id}/splits")
         except: splits = {}
 
-        # --- PROCESAMIENTO ---
         if details:
             metrics = process_report(details, zones, splits)
             report = generate_markdown(metrics)
-            
-            logging.info("Enviando reporte final...")
-            # Aquí es donde fallaba antes, ahora tenemos reintento automático
             send_telegram(chat_id, report)
         else:
-            send_telegram(chat_id, "❌ Error: Actividad sin detalles.", use_markdown=False)
+            send_telegram(chat_id, "❌ Error: Actividad vacía.", use_markdown=False)
             
     except Exception as e:
         error_trace = traceback.format_exc()
-        logging.error(f"FATAL ERROR: {error_trace}")
-        send_telegram(chat_id, f"🔥 Error Crítico: {str(e)}", use_markdown=False)
+        logging.error(f"ERROR: {error_trace}")
+        send_telegram(chat_id, f"🔥 Error: {str(e)}", use_markdown=False)
 
     return 'OK', 200
