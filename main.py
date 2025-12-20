@@ -298,93 +298,118 @@ GCT: {m['gct']} ms | Osc.V: {m['osc_v']} cm ({m['ratio_v']}%)
 
 RPE: {m['rpe']}/10 | Sensación: {m['feeling']}
     """
-
-# --- ENTRY POINT ---
+# --- ENTRY POINT (WEBHOOK & SIRI) ---
 def telegram_webhook(request):
-    req = request.get_json()
+    """
+    Maneja tanto los Webhooks de Telegram como las peticiones directas de Siri/Atajos.
+    Para Siri usar: URL?siri=true&command=mañana (o 0, o lista)
+    """
+    
+    # 1. DETECCIÓN DE MODO SIRI (HTTP GET/POST directo)
+    siri_mode = request.args.get('siri') or request.args.get('source') == 'siri'
+    command_arg = request.args.get('command')
+    
+    if siri_mode and command_arg:
+        text = command_arg.strip().lower()
+        logging.info(f"🎤 Petición Siri recibida: {text}")
+        
+        # Lógica Siri: Retornar el texto directamente, NO enviar a Telegram
+        try:
+            # Caso A: Reporte Matutino
+            if text in ['mañana', 'morning', 'reporte', 'dia']:
+                return get_morning_report(), 200
+            
+            # Caso B: Menú
+            elif text in ['menu', 'lista', 'historial']:
+                return get_activity_menu(), 200
+            
+            # Caso C: Actividad por índice (0, 1...)
+            else:
+                try:
+                    idx = int(text)
+                    # Login rápido para Siri
+                    garmin = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
+                    garmin.login()
+                    activities = garmin.get_activities(idx, 1)
+                    if not activities: return "No encontré esa actividad.", 200
+                    
+                    act_id = activities[0]['activityId']
+                    details = garmin.get_activity(act_id)
+                    
+                    # Intentamos zonas y splits (silencioso si falla)
+                    try: zones = garmin.connectapi(f"/activity-service/activity/{act_id}/hrTimeInZones")
+                    except: zones = []
+                    try: splits = garmin.connectapi(f"/activity-service/activity/{act_id}/splits")
+                    except: splits = {}
+
+                    if details:
+                        metrics = process_report(details, zones, splits)
+                        # Para Siri, el Markdown a veces se lee raro, pero el texto plano funciona bien
+                        return generate_markdown(metrics), 200
+                    return "Error: Actividad vacía.", 200
+
+                except ValueError:
+                    return "Comando no reconocido por Siri. Usa: mañana, lista o un número.", 200
+                except Exception as e:
+                    return f"Error procesando actividad: {str(e)}", 200
+
+        except Exception as e:
+            return f"Error en Siri: {str(e)}", 500
+
+    # 2. MODO TELEGRAM (Webhook JSON estándar)
+    req = request.get_json(silent=True)
     if not req or 'message' not in req: return 'OK', 200
+
     chat_id = req['message']['chat']['id']
     text = req['message'].get('text', '').strip().lower()
-    
-    # --- MODO DETECTIVE (DEBUG) ---
+
+    # --- LÓGICA EXISTENTE DE TELEGRAM ---
+    if text in ['mañana', 'buenos dias', 'morning', 'reporte', 'dia']:
+        send_telegram(chat_id, "⏳ Obteniendo signos vitales...", use_markdown=False)
+        send_telegram(chat_id, get_morning_report())
+        return 'OK', 200
+
+    if text in ['menu', 'lista', 'historial', 'actividades']:
+        send_telegram(chat_id, "⏳ Consultando historial...", use_markdown=False)
+        send_telegram(chat_id, get_activity_menu())
+        return 'OK', 200
+        
     if text == 'debug':
-        send_telegram(chat_id, "🕵️‍♂️ Iniciando diagnóstico...", use_markdown=False)
+         # (Tu código de debug aquí si quieres mantenerlo)
+         return 'OK', 200
+
+    try:
+        activity_index = int(text)
+        # Proceso de reporte actividad para Telegram
+        send_telegram(chat_id, "⏳ 1/3 Conectando...", use_markdown=False)
         try:
             garmin = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
             garmin.login()
-            today = date.today().isoformat()
+            send_telegram(chat_id, "✅ 2/3 Descargando...", use_markdown=False)
+
+            activities = garmin.get_activities(activity_index, 1)
+            if not activities:
+                send_telegram(chat_id, "❌ No encontré esa actividad.", use_markdown=False)
+                return 'OK', 200
             
-            # 1. Investigar Training Readiness (Endpoint Específico)
-            try:
-                raw_readiness = garmin.get_training_readiness(today)
-                logging.info(f"DEBUG READINESS RAW: {raw_readiness}") # Esto va a los logs de Google
-                send_telegram(chat_id, f"🔍 Readiness Endpoint:\n{str(raw_readiness)[:1000]}", use_markdown=False)
-            except Exception as e:
-                send_telegram(chat_id, f"❌ Falló Readiness Endpoint: {str(e)}", use_markdown=False)
+            act_id = activities[0]['activityId']
+            details = garmin.get_activity(act_id)
+            try: zones = garmin.connectapi(f"/activity-service/activity/{act_id}/hrTimeInZones")
+            except: zones = []
+            try: splits = garmin.connectapi(f"/activity-service/activity/{act_id}/splits")
+            except: splits = {}
 
-            # 2. Investigar User Summary (Donde a veces se esconde)
-            try:
-                raw_summary = garmin.get_user_summary(today)
-                logging.info(f"DEBUG SUMMARY RAW: {raw_summary}") # Esto va a los logs
-                
-                # Buscamos pistas clave en el resumen
-                keys_found = [k for k in raw_summary.keys() if 'readiness' in k.lower() or 'score' in k.lower()]
-                send_telegram(chat_id, f"🔍 Claves sospechosas en Summary:\n{keys_found}", use_markdown=False)
-                
-                # Ver valor exacto si existe
-                val = raw_summary.get('trainingReadiness')
-                send_telegram(chat_id, f"🔍 Valor 'trainingReadiness' en Summary: {val}", use_markdown=False)
-                
-            except Exception as e:
-                send_telegram(chat_id, f"❌ Falló Summary Endpoint: {str(e)}", use_markdown=False)
-
+            if details:
+                metrics = process_report(details, zones, splits)
+                report = generate_markdown(metrics)
+                send_telegram(chat_id, report)
+            else:
+                send_telegram(chat_id, "❌ Error: Actividad vacía.", use_markdown=False)
         except Exception as e:
-            send_telegram(chat_id, f"🔥 Error General Debug: {str(e)}", use_markdown=False)
-        
-        return 'OK', 200
-
-    if text in ['mañana', 'buenos dias', 'morning', 'reporte', 'dia']:
-        send_telegram(chat_id, "⏳ Obteniendo signos vitales...", use_markdown=False)
-        msg = get_morning_report()
-        send_telegram(chat_id, msg)
-        return 'OK', 200
-
-    if text in ['menu', 'lista', 'historial']:
-        send_telegram(chat_id, "⏳ Consultando historial...", use_markdown=False)
-        msg = get_activity_menu()
-        send_telegram(chat_id, msg)
-        return 'OK', 200
-
-    try:
-        idx = int(text)
-        send_telegram(chat_id, "⏳ 1/3 Conectando...", use_markdown=False)
-        garmin = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
-        garmin.login()
-        send_telegram(chat_id, "✅ 2/3 Descargando...", use_markdown=False)
-        
-        acts = garmin.get_activities(idx, 1)
-        if not acts:
-            send_telegram(chat_id, "❌ No encontré esa actividad.")
-            return 'OK', 200
-            
-        aid = acts[0]['activityId']
-        details = garmin.get_activity(aid)
-        try: zones = garmin.connectapi(f"/activity-service/activity/{aid}/hrTimeInZones")
-        except: zones = []
-        try: splits = garmin.connectapi(f"/activity-service/activity/{aid}/splits")
-        except: splits = {}
-        
-        if details:
-            m = process_report(details, zones, splits)
-            rep = generate_markdown(m)
-            send_telegram(chat_id, rep)
-        else: send_telegram(chat_id, "❌ Actividad vacía.")
+            send_telegram(chat_id, f"🔥 Error: {str(e)}", use_markdown=False)
             
     except ValueError:
-        help_msg = "🤖 *Comandos:*\n☀️ `mañana` (Salud)\n📋 `lista` (Historial)\n🔢 `0` (Último entreno)"
+        help_msg = "🤖 Comandos: mañana, lista, 0 (última carrera)."
         send_telegram(chat_id, help_msg)
-    except Exception as e:
-        logging.error(f"FATAL: {traceback.format_exc()}")
-        send_telegram(chat_id, f"🔥 Error: {str(e)}", use_markdown=False)
 
     return 'OK', 200
