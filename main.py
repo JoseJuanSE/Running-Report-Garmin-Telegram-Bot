@@ -3,7 +3,9 @@ import json
 import logging
 import requests
 import traceback
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
+# Importamos ZoneInfo para manejar zonas horarias (Tokio, Madrid, etc.)
+from zoneinfo import ZoneInfo 
 from garminconnect import Garmin
 
 # ==============================================================================
@@ -11,16 +13,19 @@ from garminconnect import Garmin
 # ==============================================================================
 
 # --- CLOUD RUN HACK ---
-# Force Garmin library to use /tmp for session tokens (Read-only filesystem fix)
 os.environ['HOME'] = '/tmp'
 
-# --- ENVIRONMENT VARIABLES ---
+# --- ENVIRONMENT VARIABLES / VARIABLES DE ENTORNO ---
 GARMIN_EMAIL = os.environ.get('GARMIN_EMAIL')
 GARMIN_PASSWORD = os.environ.get('GARMIN_PASSWORD')
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
 
-# Language Selection: 'es' (Spanish) or 'en' (English). Default: 'es'
+# Language Selection / Selección de Idioma (Default: 'es')
 LANG_CODE = os.environ.get('BOT_LANGUAGE', 'es').lower()
+
+# Fallback Offset (Mexico City) in case auto-detection fails
+# Desfase de respaldo (CDMX) por si falla la detección automática
+FALLBACK_OFFSET = -6
 
 # --- CONSTANTS ---
 EF_APP_ID = "e9f83886-2e1d-448e-aa0a-0cdfb9160df9"
@@ -135,6 +140,34 @@ T = TRANS.get(LANG_CODE, TRANS['es'])
 # HELPER FUNCTIONS
 # ==============================================================================
 
+def get_dynamic_today(garmin_client):
+    """
+    TRAVELER MODE / MODO VIAJERO ✈️
+    Fetches the user's configured timezone from Garmin settings.
+    Obtiene la zona horaria configurada en Garmin para saber qué día es "hoy" para el usuario.
+    """
+    try:
+        # 1. Fetch User Settings / Obtener Configuración de Usuario
+        settings = garmin_client.get_user_settings()
+        
+        # 2. Extract Timezone ID (e.g., 'America/Mexico_City', 'Asia/Tokyo')
+        user_tz_name = settings.get('userData', {}).get('timeZone')
+        
+        if user_tz_name:
+            # 3. Calculate date in that timezone / Calcular fecha en esa zona
+            user_tz = ZoneInfo(user_tz_name)
+            local_now = datetime.now(user_tz)
+            logging.info(f"📍 Detected Timezone: {user_tz_name} | Date: {local_now.date()}")
+            return local_now.date().isoformat()
+            
+    except Exception as e:
+        logging.warning(f"⚠️ Timezone detection failed, using fallback. Error: {e}")
+
+    # 4. Fallback (Manual Offset) / Respaldo Manual
+    utc_now = datetime.now(timezone.utc)
+    local_now = utc_now + timedelta(hours=FALLBACK_OFFSET)
+    return local_now.date().isoformat()
+
 def format_time(seconds):
     if not seconds: return "00:00"
     m, s = divmod(int(seconds), 60)
@@ -198,7 +231,9 @@ def get_morning_report():
     try:
         garmin = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
         garmin.login()
-        today = date.today().isoformat()
+        
+        # DYNAMIC TIMEZONE LOGIC / LÓGICA DE ZONA HORARIA DINÁMICA
+        today = get_dynamic_today(garmin)
         
         # 1. SLEEP
         sleep_score, sleep_qual, sleep_secs = "-", "-", 0
@@ -219,11 +254,11 @@ def get_morning_report():
                 if values:
                     vals = [x[1] for x in values if x[1] is not None]
                     if vals: 
-                        bb_charged = max(vals)
-                        bb_now = vals[-1]
+                        bb_charged = max(vals) 
+                        bb_now = vals[-1]      
         except: pass
 
-        # 3. RHR (Resting Heart Rate)
+        # 3. RHR
         rhr = "-"
         user_sum_data = None
         try:
@@ -232,24 +267,19 @@ def get_morning_report():
                 rhr = user_sum_data['restingHeartRate']
         except: pass
 
-        # 4. TRAINING READINESS (CORREGIDO PARA MANEJAR LISTAS)
+        # 4. TRAINING READINESS
         readiness = "-"
-        
-        # Estrategia A: Endpoint Específico
         try:
             r_data = garmin.get_training_readiness(today)
             if r_data:
-                # FIX: Si es lista, tomamos el elemento 0 (más reciente)
                 if isinstance(r_data, list) and len(r_data) > 0:
                     readiness = r_data[0].get('score', '-')
-                # FIX: Si es diccionario (backup antiguo)
                 elif isinstance(r_data, dict):
                     if 'score' in r_data: readiness = r_data['score']
                     elif 'trainingReadinessDynamicDTO' in r_data:
                         readiness = r_data['trainingReadinessDynamicDTO'].get('score')
         except: pass
 
-        # Estrategia B: User Summary Backup
         if readiness == "-" and user_sum_data:
             try:
                 if 'trainingReadinessDynamicDTO' in user_sum_data:
@@ -270,7 +300,6 @@ def get_morning_report():
                 hrv_avg = summary.get('weeklyAvg', '-')
         except: pass
 
-        # Construir Mensaje
         msg = f"{T['morning_title']}: {today}\n\n"
         msg += f"{T['sleep']}: {sleep_score}/100 ({sleep_qual})\n"
         msg += f"   {T['duration']}: {format_duration_hm(sleep_secs)}\n\n"

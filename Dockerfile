@@ -1,7 +1,6 @@
 FROM python:3.10-slim
 
-# --- ARREGLO DE CARACTERES (UTF-8) ---
-# Esto evita que salgan símbolos raros como Ã¡ o ðŸ
+# --- SOPORTE UTF-8 Y ZONAS HORARIAS ---
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -11,12 +10,13 @@ WORKDIR /app
 
 COPY . .
 
-# Instalamos dependencias
+# Instalamos dependencias + tzdata (Base de datos de zonas horarias)
 RUN pip install --no-cache-dir \
     functions-framework==3.4.0 \
     garminconnect \
     requests \
-    garth
+    garth \
+    tzdata
 
-# Ejecutamos
+# Ejecución
 CMD exec functions-framework --target=telegram_webhook --debug
