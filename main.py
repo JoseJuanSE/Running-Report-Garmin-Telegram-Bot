@@ -4,8 +4,7 @@ import logging
 import requests
 import traceback
 from datetime import date, datetime, timedelta, timezone
-# Importamos ZoneInfo para manejar zonas horarias (Tokio, Madrid, etc.)
-from zoneinfo import ZoneInfo 
+from zoneinfo import ZoneInfo
 from garminconnect import Garmin
 
 # ==============================================================================
@@ -23,8 +22,7 @@ TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
 # Language Selection / Selección de Idioma (Default: 'es')
 LANG_CODE = os.environ.get('BOT_LANGUAGE', 'es').lower()
 
-# Fallback Offset (Mexico City) in case auto-detection fails
-# Desfase de respaldo (CDMX) por si falla la detección automática
+# Fallback Offset (Mexico City)
 FALLBACK_OFFSET = -6
 
 # --- CONSTANTS ---
@@ -143,27 +141,19 @@ T = TRANS.get(LANG_CODE, TRANS['es'])
 def get_dynamic_today(garmin_client):
     """
     TRAVELER MODE / MODO VIAJERO ✈️
-    Fetches the user's configured timezone from Garmin settings.
-    Obtiene la zona horaria configurada en Garmin para saber qué día es "hoy" para el usuario.
     """
     try:
-        # 1. Fetch User Settings / Obtener Configuración de Usuario
         settings = garmin_client.get_user_settings()
-        
-        # 2. Extract Timezone ID (e.g., 'America/Mexico_City', 'Asia/Tokyo')
         user_tz_name = settings.get('userData', {}).get('timeZone')
         
         if user_tz_name:
-            # 3. Calculate date in that timezone / Calcular fecha en esa zona
             user_tz = ZoneInfo(user_tz_name)
             local_now = datetime.now(user_tz)
             logging.info(f"📍 Detected Timezone: {user_tz_name} | Date: {local_now.date()}")
             return local_now.date().isoformat()
-            
     except Exception as e:
         logging.warning(f"⚠️ Timezone detection failed, using fallback. Error: {e}")
 
-    # 4. Fallback (Manual Offset) / Respaldo Manual
     utc_now = datetime.now(timezone.utc)
     local_now = utc_now + timedelta(hours=FALLBACK_OFFSET)
     return local_now.date().isoformat()
@@ -231,18 +221,29 @@ def get_morning_report():
     try:
         garmin = Garmin(GARMIN_EMAIL, GARMIN_PASSWORD)
         garmin.login()
-        
-        # DYNAMIC TIMEZONE LOGIC / LÓGICA DE ZONA HORARIA DINÁMICA
         today = get_dynamic_today(garmin)
         
         # 1. SLEEP
         sleep_score, sleep_qual, sleep_secs = "-", "-", 0
+        sleep_range = "" # Nuevo: Hora inicio - fin
+
         try:
             sleep_data = garmin.get_sleep_data(today)
             daily_sleep = sleep_data.get('dailySleepDTO', {})
             sleep_score = daily_sleep.get('sleepScores', {}).get('overall', {}).get('value', '-')
             sleep_qual = daily_sleep.get('sleepScores', {}).get('overall', {}).get('qualifierKey', '').replace('_', ' ').title()
             sleep_secs = daily_sleep.get('sleepTimeSeconds', 0)
+            
+            # Extract start/end times
+            start_ts = daily_sleep.get('sleepStartTimestampLocal')
+            end_ts = daily_sleep.get('sleepEndTimestampLocal')
+            
+            if start_ts and end_ts:
+                # Timestamps are in ms
+                start_dt = datetime.fromtimestamp(start_ts / 1000)
+                end_dt = datetime.fromtimestamp(end_ts / 1000)
+                sleep_range = f"({start_dt.strftime('%H:%M')} - {end_dt.strftime('%H:%M')})"
+                
         except: pass
         
         # 2. BODY BATTERY
@@ -302,7 +303,8 @@ def get_morning_report():
 
         msg = f"{T['morning_title']}: {today}\n\n"
         msg += f"{T['sleep']}: {sleep_score}/100 ({sleep_qual})\n"
-        msg += f"   {T['duration']}: {format_duration_hm(sleep_secs)}\n\n"
+        # Added sleep range here
+        msg += f"   {T['duration']}: {format_duration_hm(sleep_secs)} {sleep_range}\n\n"
         msg += f"{T['body_batt']}: {T['bb_max']}: {bb_charged} | {T['bb_now']}: {bb_now}\n"
         msg += f"{T['heart']}:\n   {T['rhr']}: {rhr} ppm\n   {T['hrv']}: {hrv_status} ({hrv_avg} ms)\n\n"
         msg += f"{T['readiness']}: {readiness}/100\n"
