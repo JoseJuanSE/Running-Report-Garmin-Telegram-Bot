@@ -225,7 +225,7 @@ def get_morning_report():
         
         # 1. SLEEP
         sleep_score, sleep_qual, sleep_secs = "-", "-", 0
-        sleep_range = "" # Nuevo: Hora inicio - fin
+        sleep_range = ""
 
         try:
             sleep_data = garmin.get_sleep_data(today)
@@ -234,16 +234,12 @@ def get_morning_report():
             sleep_qual = daily_sleep.get('sleepScores', {}).get('overall', {}).get('qualifierKey', '').replace('_', ' ').title()
             sleep_secs = daily_sleep.get('sleepTimeSeconds', 0)
             
-            # Extract start/end times
             start_ts = daily_sleep.get('sleepStartTimestampLocal')
             end_ts = daily_sleep.get('sleepEndTimestampLocal')
-            
             if start_ts and end_ts:
-                # Timestamps are in ms
                 start_dt = datetime.fromtimestamp(start_ts / 1000)
                 end_dt = datetime.fromtimestamp(end_ts / 1000)
                 sleep_range = f"({start_dt.strftime('%H:%M')} - {end_dt.strftime('%H:%M')})"
-                
         except: pass
         
         # 2. BODY BATTERY
@@ -291,22 +287,25 @@ def get_morning_report():
             
         if readiness is None: readiness = "-"
 
-        # 5. HRV
-        hrv_status, hrv_avg = "-", "-"
+        # 5. HRV (LAST NIGHT + AVERAGE)
+        hrv_status, hrv_avg, hrv_last = "-", "-", "-"
         try:
             hrv_data = garmin.get_hrv_data(today) 
             if hrv_data and 'hrvSummary' in hrv_data:
                 summary = hrv_data['hrvSummary']
                 hrv_status = summary.get('status', '-').title()
                 hrv_avg = summary.get('weeklyAvg', '-')
+                hrv_last = summary.get('lastNightAvg', '-') # Extract last night / Extraer última noche
         except: pass
 
         msg = f"{T['morning_title']}: {today}\n\n"
         msg += f"{T['sleep']}: {sleep_score}/100 ({sleep_qual})\n"
-        # Added sleep range here
         msg += f"   {T['duration']}: {format_duration_hm(sleep_secs)} {sleep_range}\n\n"
         msg += f"{T['body_batt']}: {T['bb_max']}: {bb_charged} | {T['bb_now']}: {bb_now}\n"
-        msg += f"{T['heart']}:\n   {T['rhr']}: {rhr} ppm\n   {T['hrv']}: {hrv_status} ({hrv_avg} ms)\n\n"
+        
+        # HRV DISPLAY CHANGE: Shows Last Night and Average
+        msg += f"{T['heart']}:\n   {T['rhr']}: {rhr} ppm\n   {T['hrv']}: {hrv_status} (Last: {hrv_last} | Avg: {hrv_avg} ms)\n\n"
+        
         msg += f"{T['readiness']}: {readiness}/100\n"
         
         try:
