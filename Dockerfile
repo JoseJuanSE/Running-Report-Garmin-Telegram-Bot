@@ -10,13 +10,12 @@ WORKDIR /app
 
 COPY . .
 
-# Instalamos dependencias + tzdata (Base de datos de zonas horarias)
-RUN pip install --no-cache-dir \
-    functions-framework==3.4.0 \
+# Agregamos --upgrade para forzar la descarga de los parches de seguridad más recientes
+RUN pip install --no-cache-dir --upgrade \
+    functions-framework \
     garminconnect \
     requests \
     garth \
     tzdata
 
-# Ejecución
 CMD exec functions-framework --target=telegram_webhook --debug
